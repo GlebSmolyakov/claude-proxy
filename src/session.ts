@@ -14,6 +14,7 @@ import type {
 
 import type { AgentQuery, Pushable } from "./agent.js";
 import { narrowRoots } from "./editor-tools.js";
+import type { Upstream } from "./proxy.js";
 import { type Input, TaskPlan, toolInfo } from "./tools.js";
 
 /** Until the first result says otherwise. */
@@ -40,6 +41,8 @@ export interface RunningPrompt {
 export class Session {
   /** The running agent, until it ends or is stopped. */
   live: LiveQuery | undefined;
+  /** Servers of the editor this host proxies for the session. */
+  upstream: Upstream | undefined;
   /** When the session last had a turn, so idle agents can be stopped. */
   lastUsedAt = Date.now();
   /**

@@ -8,12 +8,12 @@ most useful first.
 
 ## Next, in this order
 
-- [ ] **A proxy for Air's browser.** Its own MCP server drives the preview:
-      clicks, console, network, screenshots. Worth it when a web project
-      needs it, and worth proxying rather than passing through so a
-      screenshot lands on the card as a picture.
-
 ## Smaller tails
+
+- [ ] A proxied screenshot still travels as the upstream server wrote it.
+      Rendering it as a picture on the card is the next step for the proxy.
+- [ ] Air keeps its own MCP server to itself, so the browser tools have not
+      been proxied against a live one yet.
 
 - [ ] A redirected `Bash` has no shell that remembers `cd` between calls, and
       a background command's output cannot be read back: it only goes to the

@@ -90,6 +90,8 @@ The model list starts as the aliases and is replaced by what the account really 
 
 The editor and the CLI know nothing about each other. The editor speaks ACP to the host, the CLI works as a plain CLI, and everything in between happens here. So the MCP servers an editor passes in `session/new` do not reach the CLI by default: they would meet behind the host's back, and a stdio server is also a program the editor named being run. Every such server is logged with its command or its address, and `--allow-mcp Air` or `--allow-mcp all` lets them through.
 
+When the editor's tools are wanted anyway, the host takes them on itself: `--proxy-mcp Air` or `--proxy-mcp "Air:browser-read-page,browser-screenshot"` connects the server to the host rather than to the CLI. The agent sees the chosen tools as this host's own, named like `Air: browser-read-page`, and every call goes through the same dialog and the same card as everything else.
+
 Reading without a dialog works only in the session's folders, and a folder has to be narrow enough for it. A home directory, the filesystem root and anything a home sits in are too broad: every file there goes through the dialog.
 
 ### Old sessions
@@ -114,7 +116,8 @@ Flags set the behaviour of the whole process, while the editor opens different p
 {
   "model": "haiku",
   "permissionMode": "acceptEdits",
-  "allowMcp": ["Air"]
+  "allowMcp": ["Air"],
+  "proxyMcp": { "Air": ["browser-read-page"] }
 }
 ```
 

@@ -53,6 +53,12 @@ export function toolInfo(rawName: string, input: Input, cwd: string): ToolInfo {
   // A file tool that runs through the editor shows the card of the built-in
   // tool the model asked for.
   const name = REDIRECTED[rawName] ?? rawName;
+  // A tool this host carries over from a server of the editor keeps that
+  // server's name in front: `mcp__acp__Air__browser-click` → `Air: browser-click`.
+  const carried = name.startsWith("mcp__acp__") ? name.slice("mcp__acp__".length).split("__") : [];
+  if (carried.length === 2) {
+    return { title: `${carried[0]}: ${carried[1]}`, kind: "other", content: [], locations: [] };
+  }
   const card = (
     title: string,
     kind: ToolKind,

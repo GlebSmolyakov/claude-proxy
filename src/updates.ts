@@ -91,7 +91,13 @@ export class UpdateMapper {
       }
       const text = quotaMessage(quota);
       log.info(`[${this.session.id}] ${text}`);
-      updates.push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+      updates.push({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text },
+        // Its own message, so it does not run into what the agent is saying.
+        messageId: `quota-${quota.window}-${Math.round(quota.used * 100)}`,
+      });
+      this.messageId = undefined;
     }
     return updates;
   }

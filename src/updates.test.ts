@@ -266,7 +266,11 @@ describe("UpdateMapper", () => {
 
     expect(m.map(limit(0.4))).toEqual([]);
     const [said] = m.map(limit(0.84));
-    expect(said).toMatchObject({ sessionUpdate: "agent_message_chunk" });
+    // A message of its own, so it does not run into the agent's words.
+    expect(said).toMatchObject({
+      sessionUpdate: "agent_message_chunk",
+      messageId: "quota-five_hour-84",
+    });
     expect((said as { content: { text: string } }).content.text).toContain(
       "five-hour limit is 84% used",
     );

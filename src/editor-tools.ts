@@ -48,6 +48,9 @@ const IMAGES: Record<string, string> = {
   ".webp": "image/webp",
 };
 
+/** What an in-process server takes, whatever shapes its tools were built from. */
+export type Tools = NonNullable<Parameters<typeof createSdkMcpServer>[0]["tools"]>;
+
 export interface EditorTools {
   server: McpSdkServerConfigWithInstance;
   /** Built-in names the model emits → the tool that runs instead. */
@@ -77,15 +80,16 @@ export function editorTools(
   deps: Deps,
   capabilities: ClientCapabilities | undefined,
   terminals: TerminalSupport,
+  proxied: Tools = [],
 ): EditorTools | undefined {
   const canRead = capabilities?.fs?.readTextFile === true;
   const canWrite = capabilities?.fs?.writeTextFile === true;
   const canRun = capabilities?.terminal === true;
-  if (!canRead && !canWrite && !canRun) {
+  if (!canRead && !canWrite && !canRun && proxied.length === 0) {
     return undefined;
   }
 
-  const tools = [];
+  const tools: Tools = [...proxied];
   const aliases: Record<string, string> = {};
   if (canRead) {
     tools.push(readTool(deps));

@@ -20,6 +20,7 @@ import { claudeExecutable } from "./agent.js";
 import { log } from "./log.js";
 import { resolveModel } from "./models.js";
 import { availableModes, isMode } from "./permissions.js";
+import { parseWishes } from "./proxy.js";
 
 const MODES = availableModes().map((m) => m.id);
 const USAGE = `Usage: claude-proxy [--permission-mode MODE] [--model MODEL]
@@ -30,7 +31,8 @@ An ACP agent on stdio: an editor starts it and talks to it over stdin and stdout
   --model              Model of every session: an alias or a full id [default: the CLI's own]
   --idle-minutes       Stop an agent left unused this long; 0 keeps it [default: 30]
   --login              Hand this terminal to Claude Code's own sign-in
-  --allow-mcp          MCP servers of the editor the CLI may run: names, or "all" [default: none]`;
+  --allow-mcp          MCP servers of the editor the CLI may run: names, or "all" [default: none]
+  --proxy-mcp          Servers this host carries over itself: "Air" or "Air:tool,tool;other" [default: none]`;
 
 function fail(message: string): never {
   log.error(message);
@@ -50,6 +52,7 @@ const { values } = (() => {
         "idle-minutes": { type: "string", default: "30" },
         login: { type: "boolean" },
         "allow-mcp": { type: "string", default: "" },
+        "proxy-mcp": { type: "string", default: "" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -91,6 +94,8 @@ const allowMcp: Allowed =
         .map((name) => name.trim())
         .filter(Boolean);
 
+const proxyMcp = parseWishes(values["proxy-mcp"]);
+
 let executable: string;
 try {
   executable = claudeExecutable();
@@ -120,6 +125,7 @@ const options = {
   model,
   idleMs: idleMinutes * 60_000,
   allowMcp,
+  proxyMcp,
   runQuery: query,
   readSession: getSessionMessages,
   listSessions,

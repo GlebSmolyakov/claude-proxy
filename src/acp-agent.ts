@@ -63,6 +63,7 @@ import { type Editor, editorTools, insideWorkspace, READ_TOOL } from "./editor-t
 import { log } from "./log.js";
 import { availableModes, CANCELLED, decide, isMode, permissionOptions } from "./permissions.js";
 import { projectSettings } from "./project.js";
+import { type Connect, proxyTools, type Wishes } from "./proxy.js";
 import { promptContent } from "./prompt.js";
 import { answersFrom, mcpForm, mcpResult, questionForm, questionsOf } from "./questions.js";
 import { type LiveQuery, type RunningPrompt, Session } from "./session.js";
@@ -99,6 +100,10 @@ export interface HostOptions {
   idleMs: number;
   /** MCP servers of the editor the CLI may run: their names, or every one of them. */
   allowMcp: Allowed;
+  /** Servers of the editor whose tools this host carries over itself. */
+  proxyMcp: Wishes;
+  /** Connects to a server this host proxies; tests put a fake here. */
+  connectMcp?: Connect;
   runQuery: RunQuery;
   version: string;
 }
@@ -215,7 +220,7 @@ export class ClaudeProxyAgent {
     );
   }
 
-  newSession(params: NewSessionRequest): NewSessionResponse {
+  async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     if (!isAbsolute(params.cwd)) {
       throw RequestError.invalidParams(undefined, "cwd must be an absolute path");
     }
@@ -230,6 +235,7 @@ export class ClaudeProxyAgent {
     );
     this.sessions.set(session.id, session);
     log.info(`[${session.id}] New session in ${session.cwd}, mode ${session.mode}`);
+    await this.proxy(session, params.mcpServers, project.proxyMcp);
     const broad = [session.cwd, ...session.additionalDirectories].filter(
       (root) => !session.readable.includes(root),
     );
@@ -311,6 +317,7 @@ export class ClaudeProxyAgent {
     // The CLI holds the conversation; the next prompt resumes it.
     session.started = true;
     this.sessions.set(session.id, session);
+    await this.proxy(session, params.mcpServers, project.proxyMcp);
     log.info(`[${session.id}] Loading ${messages.length} saved messages`);
 
     const mapper = new UpdateMapper(session, { replay: true });
@@ -394,10 +401,28 @@ export class ClaudeProxyAgent {
     }
     session.live?.query.close();
     session.live = undefined;
+    await session.upstream?.close();
+    session.upstream = undefined;
     await this.releaseTerminals(session);
     this.sessions.delete(session.id);
     log.info(`[${session.id}] Closed`);
     return {};
+  }
+
+  /**
+   * Connect to the servers this session proxies, so their tools become tools
+   * of this host and the editor still never meets the CLI.
+   */
+  private async proxy(
+    session: Session,
+    offered: McpServer[],
+    wishes: Wishes | undefined,
+  ): Promise<void> {
+    const wanted = wishes ?? this.options.proxyMcp;
+    if (Object.keys(wanted).length === 0) {
+      return;
+    }
+    session.upstream = await proxyTools(serverConfigs(offered), wanted, this.options.connectMcp);
   }
 
   /** Hand back the terminals the editor opened for a session, including any still running. */
@@ -487,6 +512,7 @@ export class ClaudeProxyAgent {
           });
         },
       },
+      session.upstream?.tools ?? [],
     );
     const input = new Pushable<SDKUserMessage>();
     const query = this.options.runQuery({
@@ -859,6 +885,26 @@ function usageOf(result: SDKResultMessage): PromptResponse["usage"] {
  * so, which also keeps the editor and the CLI from meeting each other
  * behind this host's back.
  */
+/** Every server the editor described, in the SDK's shape, with nothing left out. */
+export function serverConfigs(servers: McpServer[]): Record<string, McpServerConfig> {
+  const configs: Record<string, McpServerConfig> = {};
+  for (const server of servers) {
+    const pairs = (list: { name: string; value: string }[]) =>
+      Object.fromEntries(list.map((p) => [p.name, p.value]));
+    if (!("type" in server)) {
+      configs[server.name] = {
+        type: "stdio",
+        command: server.command,
+        args: server.args,
+        env: pairs(server.env),
+      };
+    } else if (server.type === "http" || server.type === "sse") {
+      configs[server.name] = { type: server.type, url: server.url, headers: pairs(server.headers) };
+    }
+  }
+  return configs;
+}
+
 export function mcpServers(
   servers: McpServer[],
   allowed: Allowed,

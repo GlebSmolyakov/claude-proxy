@@ -165,6 +165,7 @@ async function connect(
           listSessions,
           idleMs: 30 * 60_000,
           allowMcp: [],
+          proxyMcp: {},
           version: "0.0.0-test",
         },
         (h) => (host = h),
@@ -211,6 +212,7 @@ describe("initialize and session/new", () => {
         listSessions: async () => [],
         idleMs: 30 * 60_000,
         allowMcp: [],
+        proxyMcp: {},
         version: "1.2.3",
       }),
     );
@@ -271,6 +273,7 @@ describe("signing in", () => {
         listSessions: async () => [],
         idleMs: 0,
         allowMcp: [],
+        proxyMcp: {},
         version: "1.2.3",
       }),
     );

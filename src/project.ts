@@ -11,6 +11,7 @@ import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { log } from "./log.js";
 import { resolveModel } from "./models.js";
 import { isMode } from "./permissions.js";
+import { parseWishes, type Wishes } from "./proxy.js";
 
 export const PROJECT_FILE = ".claude-proxy.json";
 
@@ -19,6 +20,8 @@ export interface ProjectSettings {
   permissionMode?: PermissionMode;
   /** Names of the editor's MCP servers, or "all". */
   allowMcp?: "all" | string[];
+  /** Servers whose tools this host carries over itself, as `{ "Air": ["browser-read-page"] }`. */
+  proxyMcp?: Wishes;
 }
 
 /** What the project asks for, as far as it asks for something usable. */
@@ -47,7 +50,7 @@ export function projectSettings(cwd: string): ProjectSettings {
   }
 
   const settings: ProjectSettings = {};
-  const { model, permissionMode, allowMcp } = parsed as Record<string, unknown>;
+  const { model, permissionMode, allowMcp, proxyMcp } = parsed as Record<string, unknown>;
   const complain = (field: string, why: string) => log.warn(`Ignoring ${field} in ${path}: ${why}`);
 
   if (typeof model === "string") {
@@ -74,8 +77,31 @@ export function projectSettings(cwd: string): ProjectSettings {
     complain("allowMcp", 'it is neither a list of server names nor "all"');
   }
 
+  if (typeof proxyMcp === "string") {
+    settings.proxyMcp = parseWishes(proxyMcp);
+  } else if (proxyMcp !== null && typeof proxyMcp === "object" && !Array.isArray(proxyMcp)) {
+    const wishes: Wishes = {};
+    for (const [server, wanted] of Object.entries(proxyMcp)) {
+      if (
+        wanted === "all" ||
+        (Array.isArray(wanted) && wanted.every((n) => typeof n === "string"))
+      ) {
+        wishes[server] = wanted as "all" | string[];
+      } else {
+        complain(`proxyMcp.${server}`, 'it is neither a list of tool names nor "all"');
+      }
+    }
+    settings.proxyMcp = wishes;
+  } else if (proxyMcp !== undefined) {
+    complain("proxyMcp", "it is not a set of servers");
+  }
+
   const named = Object.entries(settings).map(([key, value]) =>
-    Array.isArray(value) ? `${key}=${value.join(" ")}` : `${key}=${String(value)}`,
+    Array.isArray(value)
+      ? `${key}=${value.join(" ")}`
+      : typeof value === "object" && value !== null
+        ? `${key}=${Object.keys(value).join(" ")}`
+        : `${key}=${String(value)}`,
   );
   if (named.length > 0) {
     log.info(`${PROJECT_FILE} in ${cwd}: ${named.join(", ")}`);
