@@ -115,6 +115,8 @@ pnpm test
 pnpm run check
 ```
 
+The editor runs the built `dist/index.js`, so a change needs a rebuild and a restart of the agent in the editor.
+
 ```
 src/
 ├── index.ts          arguments, the CLI binary, the ACP app on stdio
