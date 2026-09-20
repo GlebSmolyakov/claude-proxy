@@ -54,16 +54,18 @@ function fakeQuery(...scripts: Script[]): Fake {
   };
   fake.runQuery = ({ prompt, options }) => {
     fake.starts.push(options);
-    void (async () => {
+    let interrupt = () => {};
+    // One agent for the session: every prompt pushed into the stream runs the next turn.
+    const messages = (async function* () {
       for await (const message of prompt) {
         fake.prompts.push(message);
+        const script = scripts[Math.min(fake.prompts.length - 1, scripts.length - 1)];
+        const interrupted = new Promise<void>((resolve) => (interrupt = resolve));
+        yield* script(options, { interrupted });
       }
     })();
-    const script = scripts[Math.min(fake.starts.length - 1, scripts.length - 1)];
-    let interrupt!: () => void;
-    const interrupted = new Promise<void>((resolve) => (interrupt = resolve));
     const query: AgentQuery = {
-      [Symbol.asyncIterator]: () => script(options, { interrupted })[Symbol.asyncIterator](),
+      [Symbol.asyncIterator]: () => messages,
       interrupt: async () => {
         fake.interrupts += 1;
         interrupt();
@@ -75,6 +77,7 @@ function fakeQuery(...scripts: Script[]): Fake {
       close: () => {
         fake.closes += 1;
         interrupt();
+        void messages.return(undefined);
       },
     };
     return query;
@@ -195,33 +198,28 @@ describe("session/prompt", () => {
     expect(fake.prompts[0].message.content).toEqual([{ type: "text", text: "hi" }]);
   });
 
-  it("starts the Claude Code session under the ACP id and resumes it for the next prompt", async () => {
+  it("keeps one agent for the whole session", async () => {
     const fake = fakeQuery(hello);
     const { prompt, sessionId } = await connect(fake);
-    await prompt();
-    await prompt();
-    expect(fake.starts.map((o) => o.sessionId)).toEqual([sessionId, undefined]);
-    expect(fake.starts.map((o) => o.resume)).toEqual([undefined, sessionId]);
+    await prompt("first");
+    await prompt("second");
+    expect(fake.starts).toHaveLength(1);
+    expect(fake.starts[0]).toMatchObject({ sessionId });
+    expect(fake.starts[0].resume).toBeUndefined();
+    expect(fake.prompts).toHaveLength(2);
   });
 
-  it("starts the session again when its transcript is gone", async () => {
-    const gone = async function* (): AsyncGenerator<SDKMessage> {
-      yield result({
-        subtype: "error_during_execution",
-        is_error: true,
-        errors: ["No conversation found"],
-      });
+  it("starts a new agent on the same session when the old one dies", async () => {
+    const died = async function* (): AsyncGenerator<SDKMessage> {
+      yield init();
+      throw new Error("Claude Code process exited with code 1");
     };
-    const fake = fakeQuery(hello, gone, hello);
+    const fake = fakeQuery(died, hello);
     const { prompt, sessionId } = await connect(fake);
-    await prompt();
     await expect(prompt()).resolves.toMatchObject({ stopReason: "end_turn" });
-    expect(fake.starts.map((o) => o.resume ?? o.sessionId)).toEqual([
-      sessionId,
-      sessionId,
-      sessionId,
-    ]);
-    expect(fake.starts.map((o) => Boolean(o.resume))).toEqual([false, true, false]);
+    expect(fake.starts).toHaveLength(2);
+    expect(fake.starts[1].resume).toBe(sessionId);
+    expect(fake.starts[1].sessionId).toBeUndefined();
   });
 
   it("turns a failed turn into an error for the editor", async () => {
@@ -397,8 +395,6 @@ describe("permissions", () => {
       sessionUpdate: "current_mode_update",
       currentModeId: "acceptEdits",
     });
-    await prompt();
-    expect(fake.starts[1].permissionMode).toBe("acceptEdits");
   });
 });
 
@@ -415,16 +411,20 @@ describe("session/cancel and session/set_mode", () => {
   };
 
   it("interrupts the turn and answers the prompt with cancelled", async () => {
-    const fake = fakeQuery(waiting);
+    const fake = fakeQuery(waiting, hello);
     const { prompt, editor, sessionId, updates } = await connect(fake);
     const running = prompt();
     await waitFor(() => updates.length > 0);
     await editor.notify(methods.agent.session.cancel, { sessionId });
     await expect(running).resolves.toEqual({ stopReason: "cancelled" });
     expect(fake.interrupts).toBe(1);
+
+    // The agent survives a cancelled turn and takes the next prompt.
+    await expect(prompt()).resolves.toMatchObject({ stopReason: "end_turn" });
+    expect(fake.starts).toHaveLength(1);
   });
 
-  it("changes the mode of a running turn and of the next one", async () => {
+  it("changes the mode of a running turn", async () => {
     const fake = fakeQuery(waiting, hello);
     const { prompt, editor, sessionId, updates } = await connect(fake);
     const running = prompt();
@@ -434,9 +434,6 @@ describe("session/cancel and session/set_mode", () => {
     expect(fake.modes).toEqual(["acceptEdits"]);
     await editor.notify(methods.agent.session.cancel, { sessionId });
     await running;
-
-    await prompt();
-    expect(fake.starts[1].permissionMode).toBe("acceptEdits");
     await expect(
       editor.request(methods.agent.session.setMode, { sessionId, modeId: "yolo" }),
     ).rejects.toThrow(/unknown mode/);

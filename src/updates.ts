@@ -32,12 +32,18 @@ export class UpdateMapper {
   /** Model of the main agent's last message, whose context window counts. */
   private model: string | undefined;
   /** Tokens in the context after the main agent's last API call. */
-  private used: number | undefined;
+  private context: number | undefined;
 
   constructor(private readonly session: Session) {}
 
   map(message: SDKMessage): SessionUpdate[] {
     switch (message.type) {
+      case "system":
+        // Compaction leaves a smaller context behind; say so without waiting
+        // for the next API call to report it.
+        return message.subtype === "compact_boundary"
+          ? this.used(message.compact_metadata.post_tokens)
+          : [];
       case "stream_event":
         return this.streamEvent(message);
       case "assistant":
@@ -88,18 +94,25 @@ export class UpdateMapper {
         if (u.input_tokens == null) {
           return [];
         }
-        this.used =
+        return this.used(
           u.input_tokens +
-          (u.cache_creation_input_tokens ?? 0) +
-          (u.cache_read_input_tokens ?? 0) +
-          u.output_tokens;
-        return [
-          { sessionUpdate: "usage_update", used: this.used, size: this.session.contextWindow },
-        ];
+            (u.cache_creation_input_tokens ?? 0) +
+            (u.cache_read_input_tokens ?? 0) +
+            u.output_tokens,
+        );
       }
       default:
         return [];
     }
+  }
+
+  /** How full the context is now. */
+  private used(tokens: number | undefined): SessionUpdate[] {
+    if (tokens === undefined) {
+      return [];
+    }
+    this.context = tokens;
+    return [{ sessionUpdate: "usage_update", used: tokens, size: this.session.contextWindow }];
   }
 
   private chunk(kind: "agent_message_chunk" | "agent_thought_chunk", text: string): SessionUpdate {
@@ -190,13 +203,13 @@ export class UpdateMapper {
     if (facts && facts.contextWindow > 0) {
       this.session.contextWindow = facts.contextWindow;
     }
-    if (this.used === undefined) {
+    if (this.context === undefined) {
       return [];
     }
     return [
       {
         sessionUpdate: "usage_update",
-        used: this.used,
+        used: this.context,
         size: this.session.contextWindow,
         ...(typeof message.total_cost_usd === "number" && {
           cost: { amount: message.total_cost_usd, currency: "USD" },

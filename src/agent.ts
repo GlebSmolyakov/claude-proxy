@@ -93,12 +93,47 @@ export function userMessage(content: ContentBlockParam[]): SDKUserMessage {
 }
 
 /**
- * The prompt as a stream of one message. Streaming input keeps the control
- * channel open, which `canUseTool`, interrupting and switching modes need;
- * the SDK ends it after the result.
+ * The session's input: every prompt is pushed into the same stream, so one
+ * `query()` serves the whole conversation. A stream, unlike a single
+ * message, also keeps the control channel open, which `canUseTool`,
+ * interrupting and switching modes need.
  */
-export async function* once(message: SDKUserMessage): AsyncGenerator<SDKUserMessage> {
-  yield message;
+export class Pushable<T> implements AsyncIterable<T> {
+  private readonly items: T[] = [];
+  private waiting: ((item: IteratorResult<T>) => void) | undefined;
+  private ended = false;
+
+  push(item: T): void {
+    const waiting = this.waiting;
+    if (waiting) {
+      this.waiting = undefined;
+      waiting({ value: item, done: false });
+    } else {
+      this.items.push(item);
+    }
+  }
+
+  end(): void {
+    this.ended = true;
+    const waiting = this.waiting;
+    this.waiting = undefined;
+    waiting?.({ value: undefined, done: true });
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    return {
+      next: (): Promise<IteratorResult<T>> => {
+        const item = this.items.shift();
+        if (item !== undefined) {
+          return Promise.resolve({ value: item, done: false });
+        }
+        if (this.ended) {
+          return Promise.resolve({ value: undefined, done: true });
+        }
+        return new Promise((resolve) => (this.waiting = resolve));
+      },
+    };
+  }
 }
 
 /**

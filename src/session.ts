@@ -4,13 +4,29 @@
 import { realpathSync } from "node:fs";
 
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
-import type { McpServerConfig, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  McpServerConfig,
+  PermissionMode,
+  SDKMessage,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 
-import type { AgentQuery } from "./agent.js";
+import type { AgentQuery, Pushable } from "./agent.js";
 import { type Input, TaskPlan, toolInfo } from "./tools.js";
 
 /** Until the first result says otherwise. */
 const DEFAULT_CONTEXT_WINDOW = 200_000;
+
+/** The agent of a session: one `query()` that serves every prompt in it. */
+export interface LiveQuery {
+  query: AgentQuery;
+  /** Where prompts go. */
+  input: Pushable<SDKUserMessage>;
+  /** Read one message at a time, so the stream stays open between prompts. */
+  messages: AsyncIterator<SDKMessage>;
+  /** The last lines the CLI printed on stderr, for when it dies. */
+  stderrTail: string[];
+}
 
 export interface RunningPrompt {
   query: AgentQuery;
@@ -20,6 +36,8 @@ export interface RunningPrompt {
 }
 
 export class Session {
+  /** The running agent, until it ends or is stopped. */
+  live: LiveQuery | undefined;
   /**
    * `cwd` with its symlinks resolved. Tool inputs carry resolved paths, so
    * this is what they shorten against in a card's title.

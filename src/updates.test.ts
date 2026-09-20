@@ -141,6 +141,23 @@ describe("UpdateMapper", () => {
     expect(s.contextWindow).toBe(1_000_000);
   });
 
+  it("reports the smaller context left after compaction", () => {
+    const s = session();
+    const m = new UpdateMapper(s);
+    const boundary = {
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "auto", pre_tokens: 190_000, post_tokens: 40_000 },
+    } as unknown as Parameters<UpdateMapper["map"]>[0];
+    expect(m.map(boundary)).toEqual([
+      { sessionUpdate: "usage_update", used: 40_000, size: 200_000 },
+    ]);
+    // The turn's result then reports the same context, now with its cost.
+    expect(m.map(result())).toMatchObject([
+      { used: 40_000, cost: { amount: 0.01, currency: "USD" } },
+    ]);
+  });
+
   it("stays quiet about usage when no API call happened", () => {
     expect(new UpdateMapper(session()).map(result())).toEqual([]);
   });

@@ -30,15 +30,16 @@ import type {
   McpServerConfig,
   PermissionMode,
   SDKResultMessage,
+  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 
-import { buildOptions, once, type RunQuery, userMessage } from "./agent.js";
+import { buildOptions, Pushable, type RunQuery, userMessage } from "./agent.js";
 import { type Editor, editorFiles, insideWorkspace, READ_TOOL } from "./files.js";
 import { log } from "./log.js";
 import { availableModes, CANCELLED, decide, isMode, permissionOptions } from "./permissions.js";
 import { promptContent } from "./prompt.js";
-import { type RunningPrompt, Session } from "./session.js";
+import { type LiveQuery, type RunningPrompt, Session } from "./session.js";
 import { toolInfo } from "./tools.js";
 import { UpdateMapper } from "./updates.js";
 
@@ -59,8 +60,8 @@ export interface HostOptions {
 
 interface Run {
   result?: SDKResultMessage;
-  /** The CLI reported the session started. */
-  started: boolean;
+  /** The agent ended without finishing the turn. */
+  died: boolean;
   cancelled: boolean;
   error?: string;
   stderr: string;
@@ -150,13 +151,11 @@ export class ClaudeProxyAgent {
     const onAbort = () => void this.cancel({ sessionId: session.id });
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      const resume = session.started;
-      let run = await this.run(session, content, resume);
-      if (resume && !run.started && !run.cancelled && (run.result?.is_error ?? true)) {
-        // The transcript is gone, so there is nothing to lose by starting over.
-        log.warn(`[${session.id}] The saved session could not be resumed, starting it again`);
-        session.started = false;
-        run = await this.run(session, content, false);
+      let run = await this.turn(session, content);
+      if (run.died && !run.cancelled) {
+        // The agent died mid-conversation; a new one picks its session up.
+        log.warn(`[${session.id}] The agent ended without a result, starting it again`);
+        run = await this.turn(session, content);
       }
       return response(session, run);
     } finally {
@@ -188,14 +187,15 @@ export class ClaudeProxyAgent {
     }
     session.mode = params.modeId;
     log.info(`[${session.id}] Mode ${session.mode}`);
-    await session.running?.query.setPermissionMode(session.mode);
+    await session.live?.query.setPermissionMode(session.mode);
     return {};
   }
 
-  /** The editor went away: stop every running agent. */
+  /** The editor went away: stop every agent. */
   closeAll(): void {
     for (const session of this.sessions.values()) {
-      session.running?.query.close();
+      session.live?.query.close();
+      session.live = undefined;
     }
   }
 
@@ -207,8 +207,15 @@ export class ClaudeProxyAgent {
     return session;
   }
 
-  /** One `query()` from the prompt to its result, with every message relayed to the editor. */
-  private async run(session: Session, content: ContentBlockParam[], resume: boolean): Promise<Run> {
+  /**
+   * The session's agent, started on its first prompt. It keeps running
+   * between prompts, so the conversation, its compaction and its context
+   * live in the CLI, not in anything this host rebuilds.
+   */
+  private start(session: Session): LiveQuery {
+    if (session.live) {
+      return session.live;
+    }
     const stderrTail: string[] = [];
     const stderr = (data: string) => {
       for (const line of data.split("\n").filter((l) => l.trim() !== "")) {
@@ -221,11 +228,13 @@ export class ClaudeProxyAgent {
       { sessionId: session.id, cwd: session.cwd, editor: this.editor },
       this.capabilities,
     );
+    const input = new Pushable<SDKUserMessage>();
     const query = this.options.runQuery({
-      prompt: once(userMessage(content)),
+      prompt: input,
       options: buildOptions({
         session,
-        resume,
+        // A session whose agent died is picked up where the CLI saved it.
+        resume: session.started,
         model: this.options.model,
         executable: this.options.executable,
         canUseTool: this.canUseTool(session),
@@ -233,39 +242,65 @@ export class ClaudeProxyAgent {
         stderr,
       }),
     });
+    log.info(
+      `[${session.id}] Starting claude, ${session.started ? "resuming the session" : "new session"}, files ${files ? "through the editor" : "on disk"}`,
+    );
+    session.live = { query, input, messages: query[Symbol.asyncIterator](), stderrTail };
+    return session.live;
+  }
+
+  /** One prompt: hand it to the agent and relay what it says until the turn ends. */
+  private async turn(session: Session, content: ContentBlockParam[]): Promise<Run> {
+    const live = this.start(session);
     let finish!: () => void;
     const running: RunningPrompt = {
-      query,
+      query: live.query,
       cancelled: false,
       done: new Promise((resolve) => (finish = resolve)),
     };
     session.running = running;
+    live.input.push(userMessage(content));
 
     const mapper = new UpdateMapper(session);
-    const run: Run = { started: false, cancelled: false, stderr: "" };
+    const run: Run = { died: false, cancelled: false, stderr: "" };
     try {
-      for await (const message of query) {
+      for (;;) {
+        const next = await live.messages.next();
+        if (next.done === true) {
+          run.died = true;
+          break;
+        }
+        const message = next.value;
         if (message.type === "system" && message.subtype === "init") {
-          run.started = true;
+          // The CLI announces itself on every turn; the first one is the news.
+          if (!session.started) {
+            log.info(
+              `[${session.id}] Claude Code ${message.claude_code_version} on ${message.model}`,
+            );
+          }
           session.started = true;
-          log.info(
-            `[${session.id}] Claude Code ${message.claude_code_version} on ${message.model}, ${resume ? "resumed" : "started"}, files ${files ? "through the editor" : "on disk"}`,
-          );
-        } else if (message.type === "result") {
-          run.result = message;
         }
         for (const update of mapper.map(message)) {
           await this.update(session, update);
         }
+        if (message.type === "result") {
+          run.result = message;
+          break;
+        }
       }
     } catch (e) {
       run.error = (e as Error).message ?? String(e);
+      run.died = true;
     } finally {
       session.running = undefined;
       finish();
     }
     run.cancelled = running.cancelled;
-    run.stderr = stderrTail.join("\n");
+    run.stderr = live.stderrTail.join("\n");
+    // A dead agent leaves nothing to push the next prompt into.
+    if (run.died) {
+      session.live = undefined;
+    }
     return run;
   }
 
