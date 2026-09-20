@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 
 import type {
   CanUseTool,
+  EffortLevel,
   OnElicitation,
   Options,
   Query,
@@ -69,6 +70,11 @@ export function buildOptions(o: AgentOptions): Options {
   const mcpServers = { ...s.mcpServers, ...(o.editorTools && { [SERVER]: o.editorTools.server }) };
   return {
     ...(s.model !== undefined && { model: s.model }),
+    ...(s.effort !== undefined && { effort: s.effort as EffortLevel }),
+    ...(s.thinking !== undefined && {
+      thinking:
+        s.thinking === "off" ? { type: "disabled" as const } : { type: "adaptive" as const },
+    }),
     cwd: s.cwd,
     ...(s.additionalDirectories.length > 0 && { additionalDirectories: s.additionalDirectories }),
     ...(Object.keys(mcpServers).length > 0 && { mcpServers }),

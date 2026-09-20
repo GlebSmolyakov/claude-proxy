@@ -11,11 +11,13 @@ most useful first.
 - [ ] A redirected `Bash` has no shell that remembers `cd` between calls, and
       a background command's output cannot be read back: it only goes to the
       terminal the user watches.
-- [ ] Subagents show only their tool calls; their text is not forwarded.
+- [ ] Subagents show only their tool calls. ACP 1.4 has no nested transcript
+      to put their text in, so forwarding it would drop it into the main one;
+      their calls already carry `_meta.claudeCode.parentToolUseId`.
 - [ ] A `url` elicitation from an MCP server is declined: finishing one in a
       browser needs a channel back that this host does not have.
-- [ ] Thinking level, effort and fast mode are not session config options,
-      though the picker they would live in already exists.
+- [ ] Fast mode is not a session config option. Unlike effort and thinking it
+      has no `query()` option to carry it.
 
 ## Around the code
 

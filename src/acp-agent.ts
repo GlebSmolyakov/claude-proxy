@@ -47,7 +47,15 @@ import type {
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 
 import { buildOptions, Pushable, type RunQuery, userMessage } from "./agent.js";
-import { DEFAULT_MODEL, MODEL_CONFIG_ID, modelOption, modelOptions } from "./config.js";
+import {
+  configOptions,
+  DEFAULT_MODEL,
+  EFFORT_CONFIG_ID,
+  effortLevels,
+  MODEL_CONFIG_ID,
+  modelOptions,
+  THINKING_CONFIG_ID,
+} from "./config.js";
 import { type Editor, editorTools, insideWorkspace, READ_TOOL } from "./editor-tools.js";
 import { log } from "./log.js";
 import { availableModes, CANCELLED, decide, isMode, permissionOptions } from "./permissions.js";
@@ -197,7 +205,7 @@ export class ClaudeProxyAgent {
     return {
       sessionId: session.id,
       modes: { currentModeId: session.mode, availableModes: availableModes() },
-      configOptions: [modelOption(session)],
+      configOptions: configOptions(session),
     };
   }
 
@@ -248,7 +256,7 @@ export class ClaudeProxyAgent {
     }
     return {
       modes: { currentModeId: session.mode, availableModes: availableModes() },
-      configOptions: [modelOption(session)],
+      configOptions: configOptions(session),
     };
   }
 
@@ -467,7 +475,7 @@ export class ClaudeProxyAgent {
               run.loggedOut = true;
               break;
             }
-            await this.offerModels(session, live);
+            await this.offerModels(session, live, message.model);
             await this.offerCommands(session, live);
           }
         }
@@ -500,16 +508,18 @@ export class ClaudeProxyAgent {
   }
 
   /** Replace the picker's guesses with the models the account really has. */
-  private async offerModels(session: Session, live: LiveQuery): Promise<void> {
+  private async offerModels(session: Session, live: LiveQuery, resolved: string): Promise<void> {
     try {
-      session.models = modelOptions(await live.query.supportedModels());
+      const models = await live.query.supportedModels();
+      session.models = modelOptions(models);
+      session.effortLevels = effortLevels(models, resolved);
     } catch (e) {
       log.warn(`[${session.id}] Could not read the model list: ${(e as Error).message}`);
       return;
     }
     await this.update(session, {
       sessionUpdate: "config_option_update",
-      configOptions: [modelOption(session)],
+      configOptions: configOptions(session),
     });
   }
 
@@ -536,13 +546,41 @@ export class ClaudeProxyAgent {
     params: SetSessionConfigOptionRequest,
   ): Promise<SetSessionConfigOptionResponse> {
     const session = this.session(params.sessionId);
-    if (params.configId !== MODEL_CONFIG_ID || typeof params.value !== "string") {
-      throw RequestError.invalidParams(undefined, `unknown option '${params.configId}'`);
+    if (typeof params.value !== "string") {
+      throw RequestError.invalidParams(undefined, `option '${params.configId}' takes a value id`);
     }
-    session.model = params.value === DEFAULT_MODEL ? undefined : params.value;
-    log.info(`[${session.id}] Model ${session.model ?? DEFAULT_MODEL}`);
-    await session.live?.query.setModel(session.model);
-    return { configOptions: [modelOption(session)] };
+    const chosen = params.value === DEFAULT_MODEL ? undefined : params.value;
+    switch (params.configId) {
+      case MODEL_CONFIG_ID:
+        session.model = chosen;
+        await session.live?.query.setModel(session.model);
+        break;
+      case EFFORT_CONFIG_ID:
+        session.effort = chosen;
+        await this.restart(session);
+        break;
+      case THINKING_CONFIG_ID:
+        session.thinking = chosen;
+        await this.restart(session);
+        break;
+      default:
+        throw RequestError.invalidParams(undefined, `unknown option '${params.configId}'`);
+    }
+    log.info(`[${session.id}] ${params.configId} ${chosen ?? DEFAULT_MODEL}`);
+    return { configOptions: configOptions(session) };
+  }
+
+  /**
+   * Some settings only take hold when an agent starts. An idle one is
+   * stopped so the next prompt gets an agent that has them, resuming the
+   * conversation; a busy one keeps working and the change waits for it.
+   */
+  private async restart(session: Session): Promise<void> {
+    if (session.running || !session.live) {
+      return;
+    }
+    session.live.query.close();
+    session.live = undefined;
   }
 
   /** Every action the mode and settings leave to a human goes to the editor's dialog. */

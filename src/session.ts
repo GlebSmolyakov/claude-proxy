@@ -60,6 +60,11 @@ export class Session {
   contextWindow = DEFAULT_CONTEXT_WINDOW;
   /** What the editor's model picker offers, once the agent has reported it. */
   models: SessionConfigSelectOption[] | undefined;
+  /** Effort levels the current model takes; absent while it takes none. */
+  effortLevels: readonly string[] | undefined;
+  /** How hard the model works, and whether it thinks first; the CLI's own choice when absent. */
+  effort: string | undefined;
+  thinking: string | undefined;
 
   constructor(
     /** Both the ACP session id and the Claude Code session id. */

@@ -92,7 +92,14 @@ function fakeQuery(...scripts: Script[]): Fake {
         { name: "review", description: "Review the diff", argumentHint: "[pr]" },
       ],
       supportedModels: async () => [
-        { value: "sonnet", displayName: "Sonnet 5", description: "Everyday work" },
+        {
+          value: "sonnet",
+          resolvedModel: "claude-haiku-4-5-20251001",
+          displayName: "Sonnet 5",
+          description: "Everyday work",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "high"],
+        },
         { value: "haiku", displayName: "Haiku 4.5", description: "Fast and cheap" },
       ],
       close: () => {
@@ -519,6 +526,8 @@ describe("the model picker", () => {
     });
     const option = session.configOptions?.[0];
     expect(option).toMatchObject({ id: "model", type: "select", currentValue: "default" });
+    // Effort waits until the agent says the model takes it; thinking does not.
+    expect(session.configOptions?.map((o) => o.id)).toEqual(["model", "thinking"]);
     const values =
       option?.type === "select" ? option.options.map((o) => ("value" in o ? o.value : o.name)) : [];
     expect(values).toEqual(["default", "opus", "sonnet", "haiku"]);
@@ -558,8 +567,8 @@ describe("the model picker", () => {
     await expect(
       editor.request(methods.agent.session.setConfigOption, {
         sessionId,
-        configId: "thinking",
-        value: "high",
+        configId: "colour",
+        value: "teal",
       }),
     ).rejects.toThrow(/unknown option/);
   });
@@ -591,6 +600,54 @@ describe("slash commands", () => {
     const { prompt, updates } = await connect(fakeQuery(command));
     await prompt("/compact");
     expect(said(updates)).toMatchObject({ content: { type: "text", text: "Context compacted." } });
+  });
+});
+
+describe("effort and thinking", () => {
+  it("are offered once the agent says the model takes them", async () => {
+    const { prompt, updates } = await connect(fakeQuery(hello));
+    await prompt();
+    const offered = updates
+      .map((u) => u.update)
+      .find((u) => u.sessionUpdate === "config_option_update");
+    const effort = offered?.configOptions.find((o) => o.id === "effort");
+    expect(effort).toMatchObject({ currentValue: "default", category: "model_config" });
+    expect(
+      effort?.type === "select" && effort.options.map((o) => ("value" in o ? o.value : "")),
+    ).toEqual(["default", "low", "high"]);
+  });
+
+  it("restart an idle agent so the next turn has them", async () => {
+    const fake = fakeQuery(hello, hello);
+    const { editor, prompt, sessionId } = await connect(fake);
+    await prompt();
+
+    const set = await editor.request(methods.agent.session.setConfigOption, {
+      sessionId,
+      configId: "effort",
+      value: "high",
+    });
+    expect(set.configOptions.find((o) => o.id === "effort")).toMatchObject({
+      currentValue: "high",
+    });
+    expect(fake.closes).toBe(1);
+
+    await prompt();
+    expect(fake.starts).toHaveLength(2);
+    expect(fake.starts[1]).toMatchObject({ effort: "high", resume: sessionId });
+  });
+
+  it("turn thinking off for the agents that follow", async () => {
+    const fake = fakeQuery(hello, hello);
+    const { editor, prompt, sessionId } = await connect(fake);
+    await prompt();
+    await editor.request(methods.agent.session.setConfigOption, {
+      sessionId,
+      configId: "thinking",
+      value: "off",
+    });
+    await prompt();
+    expect(fake.starts[1].thinking).toEqual({ type: "disabled" });
   });
 });
 
