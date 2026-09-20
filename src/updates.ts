@@ -38,6 +38,8 @@ export class UpdateMapper {
   private model: string | undefined;
   /** Tokens in the context after the main agent's last API call. */
   private context: number | undefined;
+  /** Messages whose text arrived as deltas, so it is not sent twice. */
+  private readonly streamed = new Set<string>();
 
   constructor(
     private readonly session: Session,
@@ -51,9 +53,14 @@ export class UpdateMapper {
       case "system":
         // Compaction leaves a smaller context behind; say so without waiting
         // for the next API call to report it.
-        return message.subtype === "compact_boundary"
-          ? this.used(message.compact_metadata.post_tokens)
-          : [];
+        if (message.subtype === "compact_boundary") {
+          return this.used(message.compact_metadata.post_tokens);
+        }
+        // What a slash command printed is the answer to it.
+        if (message.subtype === "local_command_output" && message.content !== "") {
+          return [this.chunk("agent_message_chunk", message.content)];
+        }
+        return [];
       case "stream_event":
         return this.streamEvent(message);
       case "assistant":
@@ -93,6 +100,9 @@ export class UpdateMapper {
       }
       case "content_block_delta":
         if (event.delta.type === "text_delta" && event.delta.text !== "") {
+          if (this.messageId !== undefined) {
+            this.streamed.add(this.messageId);
+          }
           return [this.chunk("agent_message_chunk", event.delta.text)];
         }
         if (event.delta.type === "thinking_delta" && event.delta.thinking !== "") {
@@ -143,13 +153,22 @@ export class UpdateMapper {
   private assistant(message: SDKAssistantMessage): SessionUpdate[] {
     const parent = message.parent_tool_use_id;
     const updates: SessionUpdate[] = [];
-    this.messageId = typeof message.message.id === "string" ? message.message.id : this.messageId;
+    const id = typeof message.message.id === "string" ? message.message.id : undefined;
+    this.messageId = id ?? this.messageId;
+    // Text of the main agent that never came as deltas: a replayed message, or
+    // one the CLI made itself, such as the answer to a slash command.
+    const unsaid = parent === null && (this.replay || id === undefined || !this.streamed.has(id));
     for (const block of message.message.content as unknown as Block[]) {
       if (!TOOL_USE_TYPES.has(block.type)) {
-        if (this.replay && block.type === "text" && typeof block.text === "string" && block.text) {
+        if (unsaid && block.type === "text" && typeof block.text === "string" && block.text) {
           updates.push(this.chunk("agent_message_chunk", block.text));
         }
-        if (this.replay && block.type === "thinking" && typeof block.thinking === "string") {
+        if (
+          unsaid &&
+          block.type === "thinking" &&
+          typeof block.thinking === "string" &&
+          block.thinking
+        ) {
           updates.push(this.chunk("agent_thought_chunk", block.thinking));
         }
         continue;

@@ -30,7 +30,15 @@ export const AGENT_ENV = {
 
 /** The part of a `query()` the host uses; tests put a fake in its place. */
 export type AgentQuery = AsyncIterable<SDKMessage> &
-  Pick<Query, "interrupt" | "setPermissionMode" | "setModel" | "supportedModels" | "close">;
+  Pick<
+    Query,
+    | "interrupt"
+    | "setPermissionMode"
+    | "setModel"
+    | "supportedModels"
+    | "supportedCommands"
+    | "close"
+  >;
 
 export type RunQuery = (params: {
   prompt: AsyncIterable<SDKUserMessage>;

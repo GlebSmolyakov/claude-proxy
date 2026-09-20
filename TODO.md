@@ -6,9 +6,6 @@ queue, most useful first.
 
 ## For real work in an editor
 
-- [ ] **Slash commands.** `available_commands_update` is never sent, so
-      `/compact`, `/clear` and the user's own commands reach the model as
-      plain text.
 - [ ] **`auth_required` when the CLI is not logged in.** Today that is error
       text on a prompt, and the editor has nothing to offer the user.
 

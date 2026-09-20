@@ -72,6 +72,35 @@ describe("UpdateMapper", () => {
     expect(s.emitted.size).toBe(0);
   });
 
+  it("says text the agent never streamed, such as a slash command's answer", () => {
+    const m = new UpdateMapper(session());
+    m.map(messageStart("msg_1"));
+    m.map(text("Streamed."));
+    const complete = {
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: { id: "msg_1", content: [{ type: "text", text: "Streamed." }] },
+    } as unknown as Parameters<UpdateMapper["map"]>[0];
+    expect(m.map(complete)).toEqual([]);
+
+    const synthetic = {
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        id: "msg_2",
+        model: "<synthetic>",
+        content: [{ type: "text", text: "Total cost: $0.10" }],
+      },
+    } as unknown as Parameters<UpdateMapper["map"]>[0];
+    expect(m.map(synthetic)).toEqual([
+      {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Total cost: $0.10" },
+        messageId: "msg_2",
+      },
+    ]);
+  });
+
   it("leaves the terminal of a command on its card", () => {
     const s = session();
     const m = new UpdateMapper(s);

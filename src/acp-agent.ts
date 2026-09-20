@@ -434,6 +434,7 @@ export class ClaudeProxyAgent {
             );
             session.started = true;
             await this.offerModels(session, live);
+            await this.offerCommands(session, live);
           }
         }
         for (const update of mapper.map(message)) {
@@ -472,6 +473,25 @@ export class ClaudeProxyAgent {
     await this.update(session, {
       sessionUpdate: "config_option_update",
       configOptions: [modelOption(session)],
+    });
+  }
+
+  /** Tell the editor which slash commands the CLI knows, so it can offer them. */
+  private async offerCommands(session: Session, live: LiveQuery): Promise<void> {
+    let commands;
+    try {
+      commands = await live.query.supportedCommands();
+    } catch (e) {
+      log.warn(`[${session.id}] Could not read the command list: ${(e as Error).message}`);
+      return;
+    }
+    await this.update(session, {
+      sessionUpdate: "available_commands_update",
+      availableCommands: commands.map((command) => ({
+        name: command.name,
+        description: command.description,
+        ...(command.argumentHint !== "" && { input: { hint: command.argumentHint } }),
+      })),
     });
   }
 

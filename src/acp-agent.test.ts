@@ -82,6 +82,10 @@ function fakeQuery(...scripts: Script[]): Fake {
       setModel: async (model) => {
         fake.models.push(model ?? "default");
       },
+      supportedCommands: async () => [
+        { name: "compact", description: "Compact the conversation", argumentHint: "" },
+        { name: "review", description: "Review the diff", argumentHint: "[pr]" },
+      ],
       supportedModels: async () => [
         { value: "sonnet", displayName: "Sonnet 5", description: "Everyday work" },
         { value: "haiku", displayName: "Haiku 4.5", description: "Fast and cheap" },
@@ -305,8 +309,9 @@ describe("session/prompt", () => {
       },
     });
     expect(kinds(updates)).toEqual([
-      // The agent's first init also brings the account's model list.
+      // The agent's first init also brings the account's models and commands.
       "config_option_update",
+      "available_commands_update",
       "agent_message_chunk",
       "usage_update",
       "usage_update",
@@ -482,6 +487,35 @@ describe("the model picker", () => {
         value: "high",
       }),
     ).rejects.toThrow(/unknown option/);
+  });
+});
+
+describe("slash commands", () => {
+  it("are offered to the editor once the agent knows them", async () => {
+    const { prompt, updates } = await connect(fakeQuery(hello));
+    await prompt();
+    const offered = updates
+      .map((u) => u.update)
+      .find((u) => u.sessionUpdate === "available_commands_update");
+    expect(offered?.availableCommands).toEqual([
+      { name: "compact", description: "Compact the conversation" },
+      { name: "review", description: "Review the diff", input: { hint: "[pr]" } },
+    ]);
+  });
+
+  it("show what they printed as the agent's answer", async () => {
+    const command = async function* (): AsyncGenerator<SDKMessage> {
+      yield init();
+      yield {
+        type: "system",
+        subtype: "local_command_output",
+        content: "Context compacted.",
+      } as unknown as SDKMessage;
+      yield result();
+    };
+    const { prompt, updates } = await connect(fakeQuery(command));
+    await prompt("/compact");
+    expect(said(updates)).toMatchObject({ content: { type: "text", text: "Context compacted." } });
   });
 });
 
