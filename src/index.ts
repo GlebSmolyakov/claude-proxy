@@ -1,41 +1,46 @@
 #!/usr/bin/env node
-// Start-up: arguments, the state folder, the Claude Code binary, the server,
-// and a clean stop.
+// Start-up: arguments, the Claude Code binary, and the ACP connection over
+// stdio. Stdout carries the protocol, so everything else goes to stderr.
 
 import { execFile } from "node:child_process";
-import { mkdir, realpath } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
-import { parseArgs } from "node:util";
+import { readFileSync } from "node:fs";
+import { Readable, Writable } from "node:stream";
+import { parseArgs, promisify } from "node:util";
 
-import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import { ndJsonStream } from "@agentclientprotocol/sdk";
+import { type PermissionMode, query } from "@anthropic-ai/claude-agent-sdk";
 
-import { claudeExecutable, PERMISSION_MODES, runAgent } from "./agent.js";
+import { type ClaudeProxyAgent, createApp } from "./acp-agent.js";
+import { claudeExecutable } from "./agent.js";
 import { log } from "./log.js";
-import { createServer } from "./server.js";
-import { SessionStore, transcriptsDirFor } from "./session.js";
-import { RuntimeStatus } from "./status.js";
+import { resolveModel } from "./models.js";
+import { availableModes, isMode } from "./permissions.js";
 
-const USAGE = `Usage: claude-proxy [PORT] [--cwd DIR] [--permission-mode MODE]
+const MODES = availableModes().map((m) => m.id);
+const USAGE = `Usage: claude-proxy [--permission-mode MODE] [--model MODEL]
 
-  PORT                 Port on 127.0.0.1 [default: 8080]
-  --cwd DIR            Working directory of the agent [default: ~/.claude-proxy/workdir]
-  --permission-mode    ${PERMISSION_MODES.join(", ")} [default: default]`;
+An ACP agent on stdio: an editor starts it and talks to it over stdin and stdout.
+
+  --permission-mode    Mode of new sessions: ${MODES.join(", ")} [default: default]
+  --model              Model of every session: an alias or a full id [default: the CLI's own]`;
 
 function fail(message: string): never {
   log.error(message);
   process.exit(1);
 }
 
-const { values, positionals } = (() => {
+const { version } = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as { version: string };
+
+const { values } = (() => {
   try {
     return parseArgs({
-      allowPositionals: true,
       options: {
-        cwd: { type: "string" },
         "permission-mode": { type: "string", default: "default" },
+        model: { type: "string" },
         help: { type: "boolean", short: "h" },
+        version: { type: "boolean", short: "v" },
       },
     });
   } catch (e) {
@@ -43,74 +48,54 @@ const { values, positionals } = (() => {
   }
 })();
 if (values.help) {
-  console.log(USAGE);
+  process.stdout.write(`${USAGE}\n`);
   process.exit(0);
 }
-
-const port = Number(positionals[0] ?? "8080");
-if (!Number.isInteger(port) || port < 1 || port > 65535 || positionals.length > 1) {
-  fail(`Invalid arguments: ${positionals.join(" ")}\n\n${USAGE}`);
+if (values.version) {
+  process.stdout.write(`${version}\n`);
+  process.exit(0);
 }
-const permissionMode = values["permission-mode"] as PermissionMode;
-if (!PERMISSION_MODES.includes(permissionMode)) {
-  fail(`Unknown permission mode '${permissionMode}'. Use one of: ${PERMISSION_MODES.join(", ")}`);
+const permissionMode = values["permission-mode"];
+if (!isMode(permissionMode)) {
+  fail(`Unknown permission mode '${permissionMode}'. Use one of: ${MODES.join(", ")}`);
 }
-
-// State lives in ~/.claude-proxy: the session map, and by default the
-// working directory whose CLI sessions the proxy owns.
-const stateDir = join(homedir(), ".claude-proxy");
-let cwd = values.cwd ?? join(stateDir, "workdir");
+let model: string | undefined;
 try {
-  await mkdir(stateDir, { recursive: true });
-  await mkdir(cwd, { recursive: true });
-  cwd = await realpath(cwd);
+  model = values.model === undefined ? undefined : resolveModel(values.model);
 } catch (e) {
-  fail(`Cannot create ${cwd}: ${(e as Error).message}`);
+  fail((e as Error).message);
 }
 
 let executable: string;
-let cliVersion: string;
 try {
   executable = claudeExecutable();
   const { stdout } = await promisify(execFile)(executable, ["--version"]);
-  cliVersion = stdout.trim();
-  log.info(`Found Claude Code ${cliVersion} at ${executable}`);
+  log.info(`claude-proxy ${version}: Claude Code ${stdout.trim()} at ${executable}`);
 } catch (e) {
   fail(`Claude Code is not usable: ${(e as Error).message}`);
 }
 
-const sessions = await SessionStore.open(join(stateDir, "sessions.json"), transcriptsDirFor(cwd));
-sessions.startCleanup();
+const stream = ndJsonStream(
+  Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+  Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
+);
 
-const server = createServer({
-  cwd,
-  sessions,
-  status: new RuntimeStatus(cliVersion),
-  permissionMode,
+let host: ClaudeProxyAgent | undefined;
+const options = {
   executable,
-  runAgent,
-});
+  permissionMode: permissionMode as PermissionMode,
+  model,
+  runQuery: query,
+  version,
+};
+const connection = createApp(options, (h) => (host = h)).connect(stream);
+log.info(`Serving ACP on stdio (mode ${permissionMode}, model ${model ?? "the CLI's default"})`);
 
-server.on("error", (e: NodeJS.ErrnoException) => {
-  fail(e.code === "EADDRINUSE" ? `Port ${port} is already in use` : `Server error: ${e.message}`);
-});
-server.listen(port, "127.0.0.1", () => {
-  log.info(
-    `claude-proxy listening on http://127.0.0.1:${port} (cwd: ${cwd}, permissions: ${permissionMode})`,
-  );
-  log.info(
-    "endpoints: GET /health, /v1/models | POST /v1/chat/completions (OpenAI), /v1/messages (Anthropic)",
-  );
-});
-
-// Graceful shutdown: stop accepting, let running turns finish.
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.once(signal, () => {
-    log.info(`Received ${signal}, shutting down...`);
-    server.close(() => {
-      log.info("Server stopped.");
-      process.exit(0);
-    });
-    server.closeIdleConnections();
-  });
-}
+const shutdown = (reason: string) => {
+  log.info(`${reason}, stopping`);
+  host?.closeAll();
+  process.exit(0);
+};
+void connection.closed.then(() => shutdown("The editor closed the connection"));
+process.once("SIGINT", () => shutdown("Received SIGINT"));
+process.once("SIGTERM", () => shutdown("Received SIGTERM"));
