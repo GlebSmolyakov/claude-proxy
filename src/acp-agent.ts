@@ -59,6 +59,7 @@ import {
 import { type Editor, editorTools, insideWorkspace, READ_TOOL } from "./editor-tools.js";
 import { log } from "./log.js";
 import { availableModes, CANCELLED, decide, isMode, permissionOptions } from "./permissions.js";
+import { projectSettings } from "./project.js";
 import { promptContent } from "./prompt.js";
 import { answersFrom, mcpForm, mcpResult, questionForm, questionsOf } from "./questions.js";
 import { type LiveQuery, type RunningPrompt, Session } from "./session.js";
@@ -206,13 +207,14 @@ export class ClaudeProxyAgent {
     if (!isAbsolute(params.cwd)) {
       throw RequestError.invalidParams(undefined, "cwd must be an absolute path");
     }
+    const project = projectSettings(params.cwd);
     const session = new Session(
       randomUUID(),
       params.cwd,
       params.additionalDirectories ?? [],
-      mcpServers(params.mcpServers, this.options.allowMcp),
-      this.options.permissionMode,
-      this.options.model,
+      mcpServers(params.mcpServers, project.allowMcp ?? this.options.allowMcp),
+      project.permissionMode ?? this.options.permissionMode,
+      project.model ?? this.options.model,
     );
     this.sessions.set(session.id, session);
     log.info(`[${session.id}] New session in ${session.cwd}, mode ${session.mode}`);
@@ -252,13 +254,14 @@ export class ClaudeProxyAgent {
     if (messages.length === 0) {
       throw RequestError.resourceNotFound(params.sessionId);
     }
+    const project = projectSettings(params.cwd);
     const session = new Session(
       params.sessionId,
       params.cwd,
       params.additionalDirectories ?? [],
-      mcpServers(params.mcpServers, this.options.allowMcp),
-      this.options.permissionMode,
-      this.options.model,
+      mcpServers(params.mcpServers, project.allowMcp ?? this.options.allowMcp),
+      project.permissionMode ?? this.options.permissionMode,
+      project.model ?? this.options.model,
     );
     // The CLI holds the conversation; the next prompt resumes it.
     session.started = true;

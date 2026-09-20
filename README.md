@@ -105,6 +105,20 @@ Reading without a dialog works only in the session's folders, and a folder has t
 | `--login`           |               | Hand the terminal to Claude Code's own sign-in          |
 | `LOG_LEVEL`         | `info`        | `debug` adds the CLI's stderr                           |
 
+## Project settings
+
+Flags set the behaviour of the whole process, while the editor opens different projects in it. A `.claude-proxy.json` next to the code overrides the flags for its own folder:
+
+```json
+{
+  "model": "haiku",
+  "permissionMode": "acceptEdits",
+  "allowMcp": ["Air"]
+}
+```
+
+Whatever the file leaves out comes from the flags. A field the host cannot use is skipped, with a line in the log.
+
 ## What is not here
 
 - A redirected `Bash` has no shell that remembers `cd` between calls, and a background command's output stays in the editor's terminal only.

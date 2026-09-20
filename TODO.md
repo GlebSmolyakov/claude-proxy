@@ -8,10 +8,6 @@ most useful first.
 
 ## Next, in this order
 
-- [ ] **Per-project settings.** Model, mode and idle limit are flags for the
-      whole process, while a project is what they belong to. A
-      `.claude-proxy.json` next to the code would set them, with the flags as
-      the default.
 - [ ] **A list of past sessions.** `session/load` is here, `session/list` is
       not, so an editor cannot offer yesterday's conversation. The SDK lists
       sessions, titles them and renames them.
