@@ -21,9 +21,8 @@ most useful first.
 
 ## Around the code
 
-- [ ] No README, and the repository is public.
-- [ ] No CI.
-- [ ] The package is `private`, so the agent is started by the path to
-      `dist/index.js`; there is no guide for wiring it into Air or Zed.
+- [ ] The package is `private` and nothing is published, so the agent is
+      started by the path to `dist/index.js`.
+- [ ] No LICENSE file, and the repository is public.
 - [ ] `docs/agent-host-architecture.ru.md` in claude-max-api-proxy-rs still
       says this host is not implemented and will not be.
