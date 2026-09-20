@@ -16,6 +16,7 @@ export const init = (sessionId = "s") =>
     model: MODEL,
     claude_code_version: "2.1.274",
     permissionMode: "default",
+    mcp_servers: [{ name: "Air", status: "connected" }],
   });
 export const messageStart = (id: string) =>
   stream({ type: "message_start", message: { id, model: MODEL } });

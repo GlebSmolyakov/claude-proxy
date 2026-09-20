@@ -475,7 +475,7 @@ export class ClaudeProxyAgent {
         if (message.type === "system" && message.subtype === "init") {
           // The CLI announces itself on every turn; the first one is the news.
           if (!session.started) {
-            const servers = message.mcp_servers
+            const servers = (message.mcp_servers ?? [])
               .map((server) => `${server.name}=${server.status}`)
               .join(", ");
             log.info(
