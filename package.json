@@ -4,6 +4,7 @@
   "private": true,
   "description": "OpenAI and Anthropic HTTP APIs in front of the Claude Code agent, through the Claude Agent SDK",
   "type": "module",
+  "packageManager": "pnpm@11.17.0",
   "bin": {
     "claude-proxy": "dist/index.js"
   },
