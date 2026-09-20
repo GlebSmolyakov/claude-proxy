@@ -167,6 +167,7 @@ export class ClaudeProxyAgent {
     const has = (value: unknown) =>
       value === true || (value != null && value !== false) ? "yes" : "no";
     const fs = params.clientCapabilities?.fs;
+    log.debug(`Editor capabilities: ${JSON.stringify(params.clientCapabilities ?? null)}`);
     log.info(
       `Editor ${params.clientInfo?.name ?? "unknown"}: reads files ${has(fs?.readTextFile)}, writes files ${has(fs?.writeTextFile)}, ` +
         `terminal ${has(params.clientCapabilities?.terminal)}, forms ${has(params.clientCapabilities?.elicitation?.form)}, ` +
@@ -474,8 +475,12 @@ export class ClaudeProxyAgent {
         if (message.type === "system" && message.subtype === "init") {
           // The CLI announces itself on every turn; the first one is the news.
           if (!session.started) {
+            const servers = message.mcp_servers
+              .map((server) => `${server.name}=${server.status}`)
+              .join(", ");
             log.info(
-              `[${session.id}] Claude Code ${message.claude_code_version} on ${message.model}`,
+              `[${session.id}] Claude Code ${message.claude_code_version} on ${message.model}` +
+                (servers === "" ? "" : `, MCP: ${servers}`),
             );
             session.started = true;
             if (await loggedOut(live)) {
