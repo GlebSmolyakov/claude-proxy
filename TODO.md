@@ -8,9 +8,6 @@ most useful first.
 
 ## Next, in this order
 
-- [ ] **Subscription limits in the editor.** The CLI reports what each window
-      has spent and the host drops it. Say it in the chat when a window
-      crosses a threshold, and write every reading to the log.
 - [ ] **Per-project settings.** Model, mode and idle limit are flags for the
       whole process, while a project is what they belong to. A
       `.claude-proxy.json` next to the code would set them, with the flags as

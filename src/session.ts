@@ -61,6 +61,8 @@ export class Session {
   /** Calls whose card shows a terminal, so their result must not cover it. */
   readonly terminalCalls = new Set<string>();
   readonly plan = new TaskPlan();
+  /** Window → the highest share of it this session has already reported. */
+  readonly announcedQuota = new Map<string, number>();
   contextWindow = DEFAULT_CONTEXT_WINDOW;
   /** What the editor's model picker offers, once the agent has reported it. */
   models: SessionConfigSelectOption[] | undefined;

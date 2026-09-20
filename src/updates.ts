@@ -10,10 +10,13 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type {
   SDKAssistantMessage,
   SDKMessage,
+  SDKRateLimitInfo,
   SDKPartialAssistantMessage,
   SDKResultMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import { log } from "./log.js";
+import { crossing, quotaMessage, quotas } from "./quota.js";
 import type { Session } from "./session.js";
 import { type Input, PLAN_TOOLS, resultContent, todoPlan } from "./tools.js";
 
@@ -61,6 +64,8 @@ export class UpdateMapper {
           return [this.chunk("agent_message_chunk", message.content)];
         }
         return [];
+      case "rate_limit_event":
+        return this.spent(message.rate_limit_info);
       case "stream_event":
         return this.streamEvent(message);
       case "assistant":
@@ -72,6 +77,23 @@ export class UpdateMapper {
       default:
         return [];
     }
+  }
+
+  /** What the subscription has spent, when a window crosses a threshold. */
+  private spent(info: SDKRateLimitInfo): SessionUpdate[] {
+    const updates: SessionUpdate[] = [];
+    for (const quota of quotas(info)) {
+      log.debug(
+        `[${this.session.id}] ${quota.window}: ${Math.round(quota.used * 100)}% used${quota.spent ? ", used up" : ""}`,
+      );
+      if (crossing(quota, this.session.announcedQuota) === undefined) {
+        continue;
+      }
+      const text = quotaMessage(quota);
+      log.info(`[${this.session.id}] ${text}`);
+      updates.push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+    }
+    return updates;
   }
 
   /** Streamed pieces of the main agent's messages; subagents only show their tool calls. */

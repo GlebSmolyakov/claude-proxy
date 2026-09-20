@@ -253,6 +253,26 @@ describe("UpdateMapper", () => {
     expect(s.plan.entries()).toHaveLength(1);
   });
 
+  it("says how much of the subscription is spent, once per threshold", () => {
+    const m = new UpdateMapper(session());
+    const limit = (used: number) =>
+      ({
+        type: "rate_limit_event",
+        rate_limit_info: {
+          status: "allowed",
+          unifiedWindows: { five_hour: { utilization: used } },
+        },
+      }) as unknown as Parameters<UpdateMapper["map"]>[0];
+
+    expect(m.map(limit(0.4))).toEqual([]);
+    const [said] = m.map(limit(0.84));
+    expect(said).toMatchObject({ sessionUpdate: "agent_message_chunk" });
+    expect((said as { content: { text: string } }).content.text).toContain(
+      "five-hour limit is 84% used",
+    );
+    expect(m.map(limit(0.9))).toEqual([]);
+  });
+
   it("stays quiet about usage when no API call happened", () => {
     expect(new UpdateMapper(session()).map(result())).toEqual([]);
   });
