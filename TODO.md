@@ -8,9 +8,6 @@ most useful first.
 
 ## Smaller tails
 
-- [ ] A sign-in cannot be started from the editor. Where the client has
-      terminals, the agent could offer an auth method that runs
-      `claude auth login` in one.
 - [ ] A redirected `Bash` has no shell that remembers `cd` between calls, and
       a background command's output cannot be read back: it only goes to the
       terminal the user watches.

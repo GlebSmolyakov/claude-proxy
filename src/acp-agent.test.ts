@@ -225,6 +225,47 @@ describe("initialize and session/new", () => {
   });
 });
 
+describe("signing in", () => {
+  it("is offered when the client can run the agent in a terminal", async () => {
+    const connection = acpClient({ name: "test-editor" }).connect(
+      createApp({
+        executable: "/bin/claude",
+        permissionMode: "default",
+        runQuery: fakeQuery(hello).runQuery,
+        readSession: async () => [],
+        idleMs: 0,
+        version: "1.2.3",
+      }),
+    );
+    const withTerminal = await connection.agent.request(methods.agent.initialize, {
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: { auth: { terminal: true } },
+    });
+    expect(withTerminal.authMethods).toEqual([
+      {
+        type: "terminal",
+        id: "claude-login",
+        name: "Log in to Claude Code",
+        description: "Signs in to your Anthropic account, as `claude auth login` does",
+        args: ["--login"],
+      },
+    ]);
+
+    const without = await connection.agent.request(methods.agent.initialize, {
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: {},
+    });
+    expect(without.authMethods).toEqual([]);
+    // The client runs that method itself; it is not something to call here.
+    await expect(
+      connection.agent.request(methods.agent.authenticate, { methodId: "claude-login" }),
+    ).rejects.toThrow(/terminal/);
+    await expect(
+      connection.agent.request(methods.agent.authenticate, { methodId: "made-up" }),
+    ).rejects.toThrow(/unknown authentication method/);
+  });
+});
+
 describe("session/load", () => {
   const transcript = saved([
     {

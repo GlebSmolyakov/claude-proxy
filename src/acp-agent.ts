@@ -7,6 +7,7 @@ import { isAbsolute } from "node:path";
 import {
   agent as acpAgent,
   type AgentApp,
+  type AuthenticateRequest,
   type AuthenticateResponse,
   type ClientCapabilities,
   type CancelNotification,
@@ -79,7 +80,20 @@ export interface HostOptions {
 
 /** What the user is told when the CLI has no credential to work with. */
 const LOGIN_MESSAGE =
-  "Claude Code is not logged in. Run `claude auth login` in a terminal, or give it an API key through ANTHROPIC_API_KEY.";
+  "Claude Code is not logged in. Sign in from the editor, run `claude auth login` in a terminal, or give it an API key through ANTHROPIC_API_KEY.";
+
+/**
+ * Signing in where the client can run this program itself: it starts the
+ * agent again with `--login`, which hands the terminal to the CLI's own
+ * sign-in. A zero exit means it worked.
+ */
+export const LOGIN_METHOD = {
+  type: "terminal" as const,
+  id: "claude-login",
+  name: "Log in to Claude Code",
+  description: "Signs in to your Anthropic account, as `claude auth login` does",
+  args: ["--login"],
+};
 
 interface Run {
   result?: SDKResultMessage;
@@ -107,7 +121,7 @@ export function createApp(
       onHost(host);
     })
     .onRequest(methods.agent.initialize, (ctx) => host.initialize(ctx.params))
-    .onRequest(methods.agent.authenticate, () => host.authenticate())
+    .onRequest(methods.agent.authenticate, (ctx) => host.authenticate(ctx.params))
     .onRequest(methods.agent.session.new, (ctx) => host.newSession(ctx.params))
     .onRequest(methods.agent.session.load, (ctx) => host.loadSession(ctx.params))
     .onRequest(methods.agent.session.prompt, (ctx) => host.prompt(ctx.params, ctx.signal))
@@ -150,14 +164,20 @@ export class ClaudeProxyAgent {
         promptCapabilities: { image: true, embeddedContext: true },
         mcpCapabilities: { http: true, sse: true },
       },
-      // The agent uses the login of the local Claude Code; there is nothing to sign in to here.
-      authMethods: [],
+      // Signing in is the CLI's own flow; the client can run it in a terminal.
+      authMethods: params.clientCapabilities?.auth?.terminal === true ? [LOGIN_METHOD] : [],
       agentInfo: { name: "claude-proxy", title: "Claude Code", version: this.options.version },
     };
   }
 
-  authenticate(): AuthenticateResponse {
-    return {};
+  authenticate(params: AuthenticateRequest): AuthenticateResponse {
+    // The only method is a terminal one, which the client runs itself.
+    throw RequestError.invalidParams(
+      undefined,
+      params.methodId === LOGIN_METHOD.id
+        ? `${LOGIN_METHOD.name} runs in a terminal; start this program with --login there`
+        : `unknown authentication method '${params.methodId}'`,
+    );
   }
 
   newSession(params: NewSessionRequest): NewSessionResponse {

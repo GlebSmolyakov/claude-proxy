@@ -2,7 +2,7 @@
 // Start-up: arguments, the Claude Code binary, and the ACP connection over
 // stdio. Stdout carries the protocol, so everything else goes to stderr.
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import { parseArgs, promisify } from "node:util";
@@ -23,7 +23,8 @@ An ACP agent on stdio: an editor starts it and talks to it over stdin and stdout
 
   --permission-mode    Mode of new sessions: ${MODES.join(", ")} [default: default]
   --model              Model of every session: an alias or a full id [default: the CLI's own]
-  --idle-minutes       Stop an agent left unused this long; 0 keeps it [default: 30]`;
+  --idle-minutes       Stop an agent left unused this long; 0 keeps it [default: 30]
+  --login              Hand this terminal to Claude Code's own sign-in`;
 
 function fail(message: string): never {
   log.error(message);
@@ -41,6 +42,7 @@ const { values } = (() => {
         "permission-mode": { type: "string", default: "default" },
         model: { type: "string" },
         "idle-minutes": { type: "string", default: "30" },
+        login: { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -76,6 +78,14 @@ if (!Number.isFinite(idleMinutes) || idleMinutes < 0) {
 let executable: string;
 try {
   executable = claudeExecutable();
+  if (values.login) {
+    // The client runs the agent this way for terminal sign-in; the CLI takes
+    // the terminal from here and this process ends with it.
+    const login = spawn(executable, ["auth", "login"], { stdio: "inherit" });
+    login.on("exit", (code) => process.exit(code ?? 1));
+    login.on("error", (e) => fail(`Could not start the sign-in: ${e.message}`));
+    await new Promise(() => {});
+  }
   const { stdout } = await promisify(execFile)(executable, ["--version"]);
   log.info(`claude-proxy ${version}: Claude Code ${stdout.trim()} at ${executable}`);
 } catch (e) {
