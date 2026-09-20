@@ -72,6 +72,21 @@ describe("UpdateMapper", () => {
     expect(s.emitted.size).toBe(0);
   });
 
+  it("leaves the terminal of a command on its card", () => {
+    const s = session();
+    const m = new UpdateMapper(s);
+    m.map(toolUse("t1", "Bash", { command: "ls" }));
+    s.terminalCalls.add("t1");
+    expect(m.map(toolResult("t1", "a.ts\n"))).toEqual([
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "t1",
+        status: "completed",
+        rawOutput: "a.ts\n",
+      },
+    ]);
+  });
+
   it("marks failed calls and shows their error", () => {
     const m = new UpdateMapper(session());
     m.map(toolUse("t1", "Bash", { command: "false" }));

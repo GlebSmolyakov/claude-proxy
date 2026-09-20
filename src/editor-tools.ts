@@ -1,10 +1,11 @@
-// Reading and writing files through the editor instead of the disk.
+// The tools the editor serves for the agent: its file buffers and its
+// terminal.
 //
-// When the client says it can serve files, Claude Code's Read, Write and
-// Edit are redirected to the tools below, which go through ACP's
-// `fs/read_text_file` and `fs/write_text_file`. The editor answers from its
-// own buffers, so the agent sees changes that are not saved yet and its own
-// edits land where the user can see and undo them.
+// Whatever the client says it can do, the matching built-in tool is
+// redirected to a tool here. Files go through ACP's `fs/read_text_file` and
+// `fs/write_text_file`, so the agent sees changes the user has not saved and
+// its own edits land where they can be seen and undone; a command goes into
+// a terminal the user watches.
 
 import { readFile } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -16,6 +17,8 @@ import {
   tool,
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+
+import { bashTool } from "./terminal.js";
 
 /** The part of the connection the host talks to the editor through. */
 export type Editor = Pick<AgentContext, "request" | "notify">;
@@ -33,6 +36,7 @@ export const REDIRECTED: Record<string, string> = {
   [named("read")]: "Read",
   [named("write")]: "Write",
   [named("edit")]: "Edit",
+  [named("bash")]: "Bash",
 };
 
 /** Images have no text to fetch; they are read from disk as the built-in Read does. */
@@ -44,7 +48,7 @@ const IMAGES: Record<string, string> = {
   ".webp": "image/webp",
 };
 
-export interface FileTools {
+export interface EditorTools {
   server: McpSdkServerConfigWithInstance;
   /** Built-in names the model emits → the tool that runs instead. */
   aliases: Record<string, string>;
@@ -56,20 +60,28 @@ export interface Deps {
   editor: Editor;
 }
 
+/** What a session needs from the editor beyond reading and writing files. */
+export interface TerminalSupport {
+  attach: (toolCallId: string, terminalId: string) => Promise<void>;
+  terminals: Set<string>;
+}
+
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] });
 const failure = (s: string) => ({ ...text(s), isError: true });
 
 /**
- * The file tools for a session, or `undefined` when the editor serves no
- * files and the agent keeps working on the disk.
+ * The tools for a session, or `undefined` when the editor serves nothing and
+ * the agent works on its own, as it does in a terminal.
  */
-export function editorFiles(
+export function editorTools(
   deps: Deps,
   capabilities: ClientCapabilities | undefined,
-): FileTools | undefined {
+  terminals: TerminalSupport,
+): EditorTools | undefined {
   const canRead = capabilities?.fs?.readTextFile === true;
   const canWrite = capabilities?.fs?.writeTextFile === true;
-  if (!canRead && !canWrite) {
+  const canRun = capabilities?.terminal === true;
+  if (!canRead && !canWrite && !canRun) {
     return undefined;
   }
 
@@ -87,6 +99,10 @@ export function editorFiles(
   if (canRead && canWrite) {
     tools.push(editTool(deps));
     aliases.Edit = named("edit");
+  }
+  if (canRun) {
+    tools.push(bashTool({ ...deps, ...terminals }));
+    aliases.Bash = named("bash");
   }
   return { server: createSdkMcpServer({ name: SERVER, tools, alwaysLoad: true }), aliases };
 }

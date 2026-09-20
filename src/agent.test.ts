@@ -28,6 +28,7 @@ describe("agent options", () => {
     expect(o.includePartialMessages).toBe(true);
     expect(o.env).toMatchObject(AGENT_ENV);
     expect(o.env?.PATH).toBe(process.env.PATH);
+    expect(o.toolAliases).toBeUndefined();
     expect(o.pathToClaudeCodeExecutable).toBe("/bin/claude");
   });
 

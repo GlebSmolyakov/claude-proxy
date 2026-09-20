@@ -52,6 +52,10 @@ export class Session {
   readonly tools = new Map<string, { name: string; input: Input }>();
   /** Tool calls the editor already has a card for. */
   readonly emitted = new Set<string>();
+  /** Terminals the editor opened for this session and has not released. */
+  readonly terminals = new Set<string>();
+  /** Calls whose card shows a terminal, so their result must not cover it. */
+  readonly terminalCalls = new Set<string>();
   readonly plan = new TaskPlan();
   contextWindow = DEFAULT_CONTEXT_WINDOW;
   /** What the editor's model picker offers, once the agent has reported it. */

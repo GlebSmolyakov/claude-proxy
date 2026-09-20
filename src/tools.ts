@@ -12,7 +12,7 @@ import type {
   ToolKind,
 } from "@agentclientprotocol/sdk";
 
-import { REDIRECTED } from "./files.js";
+import { REDIRECTED } from "./editor-tools.js";
 
 export type Input = Record<string, unknown>;
 

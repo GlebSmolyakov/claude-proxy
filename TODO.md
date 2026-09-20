@@ -6,9 +6,6 @@ queue, most useful first.
 
 ## For real work in an editor
 
-- [ ] **A terminal for `Bash`.** ACP has `terminal/create`, and the official
-      adapter streams a command's output into the editor's terminal. Here the
-      output arrives once, whole, as text on the card.
 - [ ] **Slash commands.** `available_commands_update` is never sent, so
       `/compact`, `/clear` and the user's own commands reach the model as
       plain text.
@@ -17,6 +14,9 @@ queue, most useful first.
 
 ## Smaller tails
 
+- [ ] A redirected `Bash` has no shell that remembers `cd` between calls, and
+      a background command's output cannot be read back: it only goes to the
+      terminal the user watches.
 - [ ] The plan starts empty after `session/load`: the replay does not rebuild it.
 - [ ] Subagents show only their tool calls; their text is not forwarded.
 - [ ] MCP elicitations are still declined by the SDK itself.

@@ -45,7 +45,7 @@ import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 
 import { buildOptions, Pushable, type RunQuery, userMessage } from "./agent.js";
 import { DEFAULT_MODEL, MODEL_CONFIG_ID, modelOption, modelOptions } from "./config.js";
-import { type Editor, editorFiles, insideWorkspace, READ_TOOL } from "./files.js";
+import { type Editor, editorTools, insideWorkspace, READ_TOOL } from "./editor-tools.js";
 import { log } from "./log.js";
 import { availableModes, CANCELLED, decide, isMode, permissionOptions } from "./permissions.js";
 import { promptContent } from "./prompt.js";
@@ -288,9 +288,27 @@ export class ClaudeProxyAgent {
     }
     session.live?.query.close();
     session.live = undefined;
+    await this.releaseTerminals(session);
     this.sessions.delete(session.id);
     log.info(`[${session.id}] Closed`);
     return {};
+  }
+
+  /** Hand back the terminals the editor opened for a session, including any still running. */
+  private async releaseTerminals(session: Session): Promise<void> {
+    for (const terminalId of session.terminals) {
+      try {
+        await this.editor.request(methods.client.terminal.release, {
+          sessionId: session.id,
+          terminalId,
+        });
+      } catch (e) {
+        log.warn(
+          `[${session.id}] Could not release terminal ${terminalId}: ${(e as Error).message}`,
+        );
+      }
+    }
+    session.terminals.clear();
   }
 
   /**
@@ -349,9 +367,20 @@ export class ClaudeProxyAgent {
         stderrTail.splice(0, stderrTail.length - STDERR_TAIL_LINES);
       }
     };
-    const files = editorFiles(
+    const tools = editorTools(
       { sessionId: session.id, cwd: session.cwd, editor: this.editor },
       this.capabilities,
+      {
+        terminals: session.terminals,
+        attach: (toolCallId, terminalId) => {
+          session.terminalCalls.add(toolCallId);
+          return this.update(session, {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            content: [{ type: "terminal", terminalId }],
+          });
+        },
+      },
     );
     const input = new Pushable<SDKUserMessage>();
     const query = this.options.runQuery({
@@ -362,13 +391,13 @@ export class ClaudeProxyAgent {
         resume: session.started,
         executable: this.options.executable,
         canUseTool: this.canUseTool(session),
-        files,
+        editorTools: tools,
         questions: this.forms,
         stderr,
       }),
     });
     log.info(
-      `[${session.id}] Starting claude, ${session.started ? "resuming the session" : "new session"}, files ${files ? "through the editor" : "on disk"}`,
+      `[${session.id}] Starting claude, ${session.started ? "resuming the session" : "new session"}, ${tools ? `tools of the editor: ${Object.keys(tools.aliases).join(", ")}` : "its own tools"}`,
     );
     session.live = { query, input, messages: query[Symbol.asyncIterator](), stderrTail };
     return session.live;

@@ -221,7 +221,9 @@ export class UpdateMapper {
       } else if (!tool && !hasCard) {
         continue;
       }
-      const extra = tool && resultContent(tool.name, block.content, isError);
+      // A card showing a terminal has the output live already.
+      const shown = this.session.terminalCalls.delete(id);
+      const extra = tool && !shown && resultContent(tool.name, block.content, isError);
       updates.push({
         sessionUpdate: "tool_call_update",
         toolCallId: id,

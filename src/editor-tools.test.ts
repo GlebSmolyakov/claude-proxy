@@ -5,7 +5,14 @@ import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk";
 import { describe, expect, it } from "vitest";
 
-import { type Deps, editorFiles, editTool, insideWorkspace, readTool, writeTool } from "./files.js";
+import {
+  type Deps,
+  editorTools,
+  editTool,
+  insideWorkspace,
+  readTool,
+  writeTool,
+} from "./editor-tools.js";
 import { toolInfo } from "./tools.js";
 
 /** An editor holding one file in a buffer that the disk knows nothing about. */
@@ -158,22 +165,29 @@ describe("editing", () => {
   });
 });
 
-describe("editorFiles", () => {
+describe("editorTools", () => {
   const { deps } = editor();
+  const terminals = { attach: async () => {}, terminals: new Set<string>() };
+  const tools = (capabilities: Parameters<typeof editorTools>[1]) =>
+    editorTools(deps, capabilities, terminals);
 
   it("redirects what the editor can serve, and nothing when it serves nothing", () => {
-    expect(editorFiles(deps, { fs: { readTextFile: true, writeTextFile: true } })).toMatchObject({
-      aliases: { Read: "mcp__acp__read", Write: "mcp__acp__write", Edit: "mcp__acp__edit" },
+    expect(
+      tools({ fs: { readTextFile: true, writeTextFile: true }, terminal: true }),
+    ).toMatchObject({
+      aliases: {
+        Read: "mcp__acp__read",
+        Write: "mcp__acp__write",
+        Edit: "mcp__acp__edit",
+        Bash: "mcp__acp__bash",
+      },
     });
-    expect(editorFiles(deps, { fs: { readTextFile: true } })?.aliases).toEqual({
-      Read: "mcp__acp__read",
-    });
+    expect(tools({ fs: { readTextFile: true } })?.aliases).toEqual({ Read: "mcp__acp__read" });
     // Editing is a read and a write, so half a channel is not enough for it.
-    expect(editorFiles(deps, { fs: { writeTextFile: true } })?.aliases).toEqual({
-      Write: "mcp__acp__write",
-    });
-    expect(editorFiles(deps, { fs: {} })).toBeUndefined();
-    expect(editorFiles(deps, undefined)).toBeUndefined();
+    expect(tools({ fs: { writeTextFile: true } })?.aliases).toEqual({ Write: "mcp__acp__write" });
+    expect(tools({ terminal: true })?.aliases).toEqual({ Bash: "mcp__acp__bash" });
+    expect(tools({ fs: {} })).toBeUndefined();
+    expect(tools(undefined)).toBeUndefined();
   });
 
   it("tells files of the workspace from the rest", () => {
