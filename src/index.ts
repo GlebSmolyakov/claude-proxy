@@ -8,7 +8,7 @@ import { Readable, Writable } from "node:stream";
 import { parseArgs, promisify } from "node:util";
 
 import { ndJsonStream } from "@agentclientprotocol/sdk";
-import { type PermissionMode, query } from "@anthropic-ai/claude-agent-sdk";
+import { getSessionMessages, type PermissionMode, query } from "@anthropic-ai/claude-agent-sdk";
 
 import { type ClaudeProxyAgent, createApp } from "./acp-agent.js";
 import { claudeExecutable } from "./agent.js";
@@ -86,6 +86,7 @@ const options = {
   permissionMode: permissionMode as PermissionMode,
   model,
   runQuery: query,
+  readSession: getSessionMessages,
   version,
 };
 const connection = createApp(options, (h) => (host = h)).connect(stream);

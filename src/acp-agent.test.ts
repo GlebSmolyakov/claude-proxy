@@ -15,7 +15,7 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import { type AgentQuery, type RunQuery } from "./agent.js";
-import { createApp } from "./acp-agent.js";
+import { createApp, type HostOptions } from "./acp-agent.js";
 import { OPTION } from "./permissions.js";
 import {
   init,
@@ -99,6 +99,15 @@ function never(): never {
   throw new Error("no script for this query");
 }
 
+/** A saved conversation, in the shape `getSessionMessages` returns. */
+const saved = (messages: object[]) =>
+  messages.map((message, i) => ({
+    ...message,
+    uuid: `u${i}`,
+    session_id: "saved",
+    parent_agent_id: null,
+  })) as never;
+
 async function connect(
   fake: Fake,
   answer: (request: RequestPermissionRequest) => RequestPermissionResponse = () => ({
@@ -108,6 +117,7 @@ async function connect(
     readTextFile: false,
     writeTextFile: false,
   },
+  readSession: HostOptions["readSession"] = async () => [],
 ) {
   const updates: SessionNotification[] = [];
   const asked: RequestPermissionRequest[] = [];
@@ -124,6 +134,7 @@ async function connect(
         executable: "/bin/claude",
         permissionMode: "default",
         runQuery: fake.runQuery,
+        readSession,
         version: "0.0.0-test",
       }),
     );
@@ -164,6 +175,7 @@ describe("initialize and session/new", () => {
         executable: "/bin/claude",
         permissionMode: "acceptEdits",
         runQuery: fakeQuery(hello).runQuery,
+        readSession: async () => [],
         version: "1.2.3",
       }),
     );
@@ -187,6 +199,78 @@ describe("initialize and session/new", () => {
     await expect(
       connection.agent.request(methods.agent.session.new, { cwd: "relative", mcpServers: [] }),
     ).rejects.toThrow(/absolute/);
+  });
+});
+
+describe("session/load", () => {
+  const transcript = saved([
+    {
+      type: "user",
+      message: { role: "user", content: "what is in a.ts?" },
+      parent_tool_use_id: null,
+    },
+    {
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        id: "msg_1",
+        content: [
+          { type: "text", text: "Let me look." },
+          { type: "tool_use", id: "t1", name: "Read", input: { file_path: "/repo/a.ts" } },
+        ],
+      },
+    },
+    {
+      type: "user",
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "t1", content: "export {}" }],
+      },
+    },
+    {
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: { id: "msg_2", content: [{ type: "text", text: "An empty module." }] },
+    },
+  ]);
+
+  it("replays the saved conversation and carries on from it", async () => {
+    const fake = fakeQuery(hello);
+    const { editor, updates } = await connect(fake, undefined, undefined, async () => transcript);
+    const loaded = await editor.request(methods.agent.session.load, {
+      sessionId: "saved-1",
+      cwd: "/repo",
+      mcpServers: [],
+    });
+    expect(loaded.modes?.currentModeId).toBe("default");
+    expect(kinds(updates)).toEqual([
+      "user_message_chunk",
+      "agent_message_chunk",
+      "tool_call",
+      "tool_call_update",
+      "agent_message_chunk",
+    ]);
+    expect(updates[2].update).toMatchObject({ toolCallId: "t1", title: "Read a.ts" });
+    expect(updates[3].update).toMatchObject({ toolCallId: "t1", status: "completed" });
+
+    await editor.request(methods.agent.session.prompt, {
+      sessionId: "saved-1",
+      prompt: [{ type: "text", text: "and b.ts?" }],
+    });
+    expect(fake.starts[0].resume).toBe("saved-1");
+    expect(fake.starts[0].sessionId).toBeUndefined();
+  });
+
+  it("refuses a session the CLI does not have", async () => {
+    const { editor } = await connect(fakeQuery(hello), undefined, undefined, async () => []);
+    await expect(
+      editor.request(methods.agent.session.load, {
+        sessionId: "gone",
+        cwd: "/repo",
+        mcpServers: [],
+      }),
+    ).rejects.toThrow();
   });
 });
 

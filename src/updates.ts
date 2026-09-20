@@ -27,6 +27,11 @@ type Block = { type: string } & Record<string, unknown>;
 
 /** One per prompt; the session carries what outlives it. */
 export class UpdateMapper {
+  /**
+   * Replaying a saved conversation, where the text arrives inside complete
+   * messages because there are no stream events to carry it.
+   */
+  private readonly replay: boolean;
   /** Id of the API message being streamed; chunks of one message share it. */
   private messageId: string | undefined;
   /** Model of the main agent's last message, whose context window counts. */
@@ -34,7 +39,12 @@ export class UpdateMapper {
   /** Tokens in the context after the main agent's last API call. */
   private context: number | undefined;
 
-  constructor(private readonly session: Session) {}
+  constructor(
+    private readonly session: Session,
+    options: { replay?: boolean } = {},
+  ) {
+    this.replay = options.replay === true;
+  }
 
   map(message: SDKMessage): SessionUpdate[] {
     switch (message.type) {
@@ -49,7 +59,7 @@ export class UpdateMapper {
       case "assistant":
         return this.assistant(message);
       case "user":
-        return this.results(message.message.content, message.tool_use_result);
+        return this.results(message.message.content, message.tool_use_result, "user");
       case "result":
         return this.result(message);
       default:
@@ -115,7 +125,10 @@ export class UpdateMapper {
     return [{ sessionUpdate: "usage_update", used: tokens, size: this.session.contextWindow }];
   }
 
-  private chunk(kind: "agent_message_chunk" | "agent_thought_chunk", text: string): SessionUpdate {
+  private chunk(
+    kind: "agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk",
+    text: string,
+  ): SessionUpdate {
     return {
       sessionUpdate: kind,
       content: { type: "text", text },
@@ -130,8 +143,15 @@ export class UpdateMapper {
   private assistant(message: SDKAssistantMessage): SessionUpdate[] {
     const parent = message.parent_tool_use_id;
     const updates: SessionUpdate[] = [];
+    this.messageId = typeof message.message.id === "string" ? message.message.id : this.messageId;
     for (const block of message.message.content as unknown as Block[]) {
       if (!TOOL_USE_TYPES.has(block.type)) {
+        if (this.replay && block.type === "text" && typeof block.text === "string" && block.text) {
+          updates.push(this.chunk("agent_message_chunk", block.text));
+        }
+        if (this.replay && block.type === "thinking" && typeof block.thinking === "string") {
+          updates.push(this.chunk("agent_thought_chunk", block.thinking));
+        }
         continue;
       }
       const id = block.id as string;
@@ -151,7 +171,7 @@ export class UpdateMapper {
       }
     }
     // Server tools answer inside the assistant message itself.
-    updates.push(...this.results(message.message.content, undefined));
+    updates.push(...this.results(message.message.content, undefined, "assistant"));
     return updates;
   }
 
@@ -160,13 +180,30 @@ export class UpdateMapper {
    * the plan. `structured` is the tool's own output object, which the SDK
    * sends only for a message that carries a single result.
    */
-  private results(content: unknown, structured: unknown): SessionUpdate[] {
+  private results(
+    content: unknown,
+    structured: unknown,
+    from: "user" | "assistant",
+  ): SessionUpdate[] {
+    // Only a replayed user message has text of its own to show; an assistant
+    // message is here for the server tools that answer inside it.
+    const spoken = this.replay && from === "user";
+    if (typeof content === "string") {
+      return spoken && content !== "" ? [this.chunk("user_message_chunk", content)] : [];
+    }
     if (!Array.isArray(content)) {
       return [];
     }
+    const updates: SessionUpdate[] = [];
+    if (spoken) {
+      for (const block of content as Block[]) {
+        if (block.type === "text" && typeof block.text === "string" && block.text !== "") {
+          updates.push(this.chunk("user_message_chunk", block.text));
+        }
+      }
+    }
     const results = (content as Block[]).filter((b) => typeof b.tool_use_id === "string");
     const output = results.length === 1 ? structured : undefined;
-    const updates: SessionUpdate[] = [];
     for (const block of results) {
       const id = block.tool_use_id as string;
       const isError = block.is_error === true;

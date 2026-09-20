@@ -12,6 +12,8 @@ import {
   type CancelNotification,
   type InitializeRequest,
   type InitializeResponse,
+  type LoadSessionRequest,
+  type LoadSessionResponse,
   type McpServer,
   methods,
   type NewSessionRequest,
@@ -30,6 +32,8 @@ import {
 import type {
   CanUseTool,
   McpServerConfig,
+  SDKMessage,
+  SessionMessage,
   PermissionMode,
   SDKResultMessage,
   SDKUserMessage,
@@ -53,6 +57,8 @@ const STDERR_TAIL_LINES = 5;
 export interface HostOptions {
   /** The Claude Code binary. */
   executable: string;
+  /** Reads a saved conversation back; tests put a fake here. */
+  readSession: (sessionId: string, options: { dir: string }) => Promise<SessionMessage[]>;
   /** Mode of new sessions. */
   permissionMode: PermissionMode;
   /** Model of every session; the CLI's own default when absent. */
@@ -87,6 +93,7 @@ export function createApp(
     .onRequest(methods.agent.initialize, (ctx) => host.initialize(ctx.params))
     .onRequest(methods.agent.authenticate, () => host.authenticate())
     .onRequest(methods.agent.session.new, (ctx) => host.newSession(ctx.params))
+    .onRequest(methods.agent.session.load, (ctx) => host.loadSession(ctx.params))
     .onRequest(methods.agent.session.prompt, (ctx) => host.prompt(ctx.params, ctx.signal))
     .onRequest(methods.agent.session.setMode, (ctx) => host.setSessionMode(ctx.params))
     .onRequest(methods.agent.session.setConfigOption, (ctx) =>
@@ -110,7 +117,7 @@ export class ClaudeProxyAgent {
     return {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
-        loadSession: false,
+        loadSession: true,
         promptCapabilities: { image: true, embeddedContext: true },
         mcpCapabilities: { http: true, sse: true },
       },
@@ -140,6 +147,57 @@ export class ClaudeProxyAgent {
     log.info(`[${session.id}] New session in ${session.cwd}, mode ${session.mode}`);
     return {
       sessionId: session.id,
+      modes: { currentModeId: session.mode, availableModes: availableModes() },
+      configOptions: [modelOption(session)],
+    };
+  }
+
+  /**
+   * A session the editor knew before: the CLI still has its transcript, so
+   * the conversation is replayed to the editor and the next prompt picks the
+   * session up where it stopped.
+   */
+  async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
+    if (!isAbsolute(params.cwd)) {
+      throw RequestError.invalidParams(undefined, "cwd must be an absolute path");
+    }
+    let messages: SessionMessage[];
+    try {
+      messages = await this.options.readSession(params.sessionId, { dir: params.cwd });
+    } catch (e) {
+      throw RequestError.internalError(
+        undefined,
+        `could not read the session: ${(e as Error).message}`,
+      );
+    }
+    if (messages.length === 0) {
+      throw RequestError.resourceNotFound(params.sessionId);
+    }
+    const session = new Session(
+      params.sessionId,
+      params.cwd,
+      params.additionalDirectories ?? [],
+      mcpServers(params.mcpServers),
+      this.options.permissionMode,
+      this.options.model,
+    );
+    // The CLI holds the conversation; the next prompt resumes it.
+    session.started = true;
+    this.sessions.set(session.id, session);
+    log.info(`[${session.id}] Loading ${messages.length} saved messages`);
+
+    const mapper = new UpdateMapper(session, { replay: true });
+    for (const message of messages) {
+      const replayed = {
+        type: message.type,
+        message: message.message,
+        parent_tool_use_id: message.parent_tool_use_id,
+      } as unknown as SDKMessage;
+      for (const update of mapper.map(replayed)) {
+        await this.update(session, update);
+      }
+    }
+    return {
       modes: { currentModeId: session.mode, availableModes: availableModes() },
       configOptions: [modelOption(session)],
     };

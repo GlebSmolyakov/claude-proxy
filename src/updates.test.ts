@@ -158,6 +158,41 @@ describe("UpdateMapper", () => {
     ]);
   });
 
+  it("carries the text of complete messages when replaying a saved conversation", () => {
+    const m = new UpdateMapper(session(), { replay: true });
+    const user = {
+      type: "user",
+      parent_tool_use_id: null,
+      message: { role: "user", content: [{ type: "text", text: "hi" }] },
+    } as unknown as Parameters<UpdateMapper["map"]>[0];
+    const assistant = {
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        id: "msg_1",
+        content: [
+          { type: "thinking", thinking: "hm" },
+          { type: "text", text: "Hello" },
+        ],
+      },
+    } as unknown as Parameters<UpdateMapper["map"]>[0];
+    expect(m.map(user)).toEqual([
+      { sessionUpdate: "user_message_chunk", content: { type: "text", text: "hi" } },
+    ]);
+    expect(m.map(assistant)).toEqual([
+      {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "hm" },
+        messageId: "msg_1",
+      },
+      {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Hello" },
+        messageId: "msg_1",
+      },
+    ]);
+  });
+
   it("stays quiet about usage when no API call happened", () => {
     expect(new UpdateMapper(session()).map(result())).toEqual([]);
   });
