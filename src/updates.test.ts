@@ -14,7 +14,7 @@ import {
 import { Session } from "./session.js";
 import { UpdateMapper } from "./updates.js";
 
-const session = () => new Session("s", "/repo", [], {}, "default");
+const session = () => new Session("s", "/repo", [], {}, "default", undefined);
 
 describe("UpdateMapper", () => {
   it("streams text and thinking as chunks of one message", () => {

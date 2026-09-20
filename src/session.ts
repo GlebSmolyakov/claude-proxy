@@ -3,7 +3,7 @@
 
 import { realpathSync } from "node:fs";
 
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { SessionConfigSelectOption, SessionUpdate } from "@agentclientprotocol/sdk";
 import type {
   McpServerConfig,
   PermissionMode,
@@ -52,6 +52,8 @@ export class Session {
   readonly emitted = new Set<string>();
   readonly plan = new TaskPlan();
   contextWindow = DEFAULT_CONTEXT_WINDOW;
+  /** What the editor's model picker offers, once the agent has reported it. */
+  models: SessionConfigSelectOption[] | undefined;
 
   constructor(
     /** Both the ACP session id and the Claude Code session id. */
@@ -60,6 +62,8 @@ export class Session {
     readonly additionalDirectories: string[],
     readonly mcpServers: Record<string, McpServerConfig>,
     public mode: PermissionMode,
+    /** An alias or a full id; the CLI's own default when absent. */
+    public model: string | undefined,
   ) {
     this.displayRoot = resolved(cwd);
   }

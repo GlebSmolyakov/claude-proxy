@@ -21,6 +21,8 @@ import {
   type PromptResponse,
   RequestError,
   type SessionUpdate,
+  type SetSessionConfigOptionRequest,
+  type SetSessionConfigOptionResponse,
   type SetSessionModeRequest,
   type SetSessionModeResponse,
   type StopReason,
@@ -35,6 +37,7 @@ import type {
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 
 import { buildOptions, Pushable, type RunQuery, userMessage } from "./agent.js";
+import { DEFAULT_MODEL, MODEL_CONFIG_ID, modelOption, modelOptions } from "./config.js";
 import { type Editor, editorFiles, insideWorkspace, READ_TOOL } from "./files.js";
 import { log } from "./log.js";
 import { availableModes, CANCELLED, decide, isMode, permissionOptions } from "./permissions.js";
@@ -86,6 +89,9 @@ export function createApp(
     .onRequest(methods.agent.session.new, (ctx) => host.newSession(ctx.params))
     .onRequest(methods.agent.session.prompt, (ctx) => host.prompt(ctx.params, ctx.signal))
     .onRequest(methods.agent.session.setMode, (ctx) => host.setSessionMode(ctx.params))
+    .onRequest(methods.agent.session.setConfigOption, (ctx) =>
+      host.setSessionConfigOption(ctx.params),
+    )
     .onNotification(methods.agent.session.cancel, (ctx) => host.cancel(ctx.params));
 }
 
@@ -128,12 +134,14 @@ export class ClaudeProxyAgent {
       params.additionalDirectories ?? [],
       mcpServers(params.mcpServers),
       this.options.permissionMode,
+      this.options.model,
     );
     this.sessions.set(session.id, session);
     log.info(`[${session.id}] New session in ${session.cwd}, mode ${session.mode}`);
     return {
       sessionId: session.id,
       modes: { currentModeId: session.mode, availableModes: availableModes() },
+      configOptions: [modelOption(session)],
     };
   }
 
@@ -235,7 +243,6 @@ export class ClaudeProxyAgent {
         session,
         // A session whose agent died is picked up where the CLI saved it.
         resume: session.started,
-        model: this.options.model,
         executable: this.options.executable,
         canUseTool: this.canUseTool(session),
         files,
@@ -277,8 +284,9 @@ export class ClaudeProxyAgent {
             log.info(
               `[${session.id}] Claude Code ${message.claude_code_version} on ${message.model}`,
             );
+            session.started = true;
+            await this.offerModels(session, live);
           }
-          session.started = true;
         }
         for (const update of mapper.map(message)) {
           await this.update(session, update);
@@ -302,6 +310,33 @@ export class ClaudeProxyAgent {
       session.live = undefined;
     }
     return run;
+  }
+
+  /** Replace the picker's guesses with the models the account really has. */
+  private async offerModels(session: Session, live: LiveQuery): Promise<void> {
+    try {
+      session.models = modelOptions(await live.query.supportedModels());
+    } catch (e) {
+      log.warn(`[${session.id}] Could not read the model list: ${(e as Error).message}`);
+      return;
+    }
+    await this.update(session, {
+      sessionUpdate: "config_option_update",
+      configOptions: [modelOption(session)],
+    });
+  }
+
+  async setSessionConfigOption(
+    params: SetSessionConfigOptionRequest,
+  ): Promise<SetSessionConfigOptionResponse> {
+    const session = this.session(params.sessionId);
+    if (params.configId !== MODEL_CONFIG_ID || typeof params.value !== "string") {
+      throw RequestError.invalidParams(undefined, `unknown option '${params.configId}'`);
+    }
+    session.model = params.value === DEFAULT_MODEL ? undefined : params.value;
+    log.info(`[${session.id}] Model ${session.model ?? DEFAULT_MODEL}`);
+    await session.live?.query.setModel(session.model);
+    return { configOptions: [modelOption(session)] };
   }
 
   /** Every action the mode and settings leave to a human goes to the editor's dialog. */

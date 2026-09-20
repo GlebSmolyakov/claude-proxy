@@ -5,7 +5,7 @@ import { Session } from "./session.js";
 
 function build(
   overrides: Partial<AgentOptions> = {},
-  session = new Session("id-1", "/repo", [], {}, "default"),
+  session = new Session("id-1", "/repo", [], {}, "default", undefined),
 ) {
   return buildOptions({
     session,
@@ -41,7 +41,7 @@ describe("agent options", () => {
 
   it("carry the session's mode and send approvals to the editor", () => {
     const canUseTool = async () => ({ behavior: "deny" as const, message: "no" });
-    const o = build({ canUseTool }, new Session("id", "/repo", [], {}, "plan"));
+    const o = build({ canUseTool }, new Session("id", "/repo", [], {}, "plan", undefined));
     expect(o.permissionMode).toBe("plan");
     expect(o.canUseTool).toBe(canUseTool);
     expect(o.disallowedTools).toEqual(["AskUserQuestion"]);
@@ -53,8 +53,15 @@ describe("agent options", () => {
     expect(plain.additionalDirectories).toBeUndefined();
     expect(plain.mcpServers).toBeUndefined();
     const full = build(
-      { model: "haiku" },
-      new Session("id", "/repo", ["/lib"], { db: { type: "stdio", command: "db-mcp" } }, "default"),
+      {},
+      new Session(
+        "id",
+        "/repo",
+        ["/lib"],
+        { db: { type: "stdio", command: "db-mcp" } },
+        "default",
+        "haiku",
+      ),
     );
     expect(full.model).toBe("haiku");
     expect(full.additionalDirectories).toEqual(["/lib"]);

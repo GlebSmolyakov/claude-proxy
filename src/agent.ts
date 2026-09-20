@@ -30,7 +30,7 @@ export const AGENT_ENV = {
 
 /** The part of a `query()` the host uses; tests put a fake in its place. */
 export type AgentQuery = AsyncIterable<SDKMessage> &
-  Pick<Query, "interrupt" | "setPermissionMode" | "close">;
+  Pick<Query, "interrupt" | "setPermissionMode" | "setModel" | "supportedModels" | "close">;
 
 export type RunQuery = (params: {
   prompt: AsyncIterable<SDKUserMessage>;
@@ -41,8 +41,6 @@ export interface AgentOptions {
   session: Session;
   /** Continue the session's saved transcript instead of starting it. */
   resume: boolean;
-  /** An alias or a full model id; the CLI's own default when absent. */
-  model?: string;
   /** The Claude Code binary. */
   executable: string;
   /** Asks the editor about actions that need approval. */
@@ -56,7 +54,7 @@ export function buildOptions(o: AgentOptions): Options {
   const s = o.session;
   const mcpServers = { ...s.mcpServers, ...(o.files && { [SERVER]: o.files.server }) };
   return {
-    ...(o.model !== undefined && { model: o.model }),
+    ...(s.model !== undefined && { model: s.model }),
     cwd: s.cwd,
     ...(s.additionalDirectories.length > 0 && { additionalDirectories: s.additionalDirectories }),
     ...(Object.keys(mcpServers).length > 0 && { mcpServers }),

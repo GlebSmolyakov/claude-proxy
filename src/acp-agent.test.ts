@@ -35,6 +35,8 @@ type Script = (
 
 interface Fake {
   runQuery: RunQuery;
+  /** Models the editor asked for, through the picker. */
+  models: string[];
   /** Options of every query the host started, in order. */
   starts: Options[];
   prompts: SDKUserMessage[];
@@ -51,6 +53,7 @@ function fakeQuery(...scripts: Script[]): Fake {
     interrupts: 0,
     closes: 0,
     modes: [],
+    models: [],
   };
   fake.runQuery = ({ prompt, options }) => {
     fake.starts.push(options);
@@ -74,6 +77,13 @@ function fakeQuery(...scripts: Script[]): Fake {
       setPermissionMode: async (mode) => {
         fake.modes.push(mode);
       },
+      setModel: async (model) => {
+        fake.models.push(model ?? "default");
+      },
+      supportedModels: async () => [
+        { value: "sonnet", displayName: "Sonnet 5", description: "Everyday work" },
+        { value: "haiku", displayName: "Haiku 4.5", description: "Fast and cheap" },
+      ],
       close: () => {
         fake.closes += 1;
         interrupt();
@@ -135,6 +145,9 @@ async function connect(
 }
 
 const kinds = (updates: SessionNotification[]) => updates.map((u) => u.update.sessionUpdate);
+/** The agent's first spoken words. */
+const said = (updates: SessionNotification[]) =>
+  updates.map((u) => u.update).find((u) => u.sessionUpdate === "agent_message_chunk");
 
 async function* hello(): AsyncGenerator<SDKMessage> {
   yield init();
@@ -193,8 +206,14 @@ describe("session/prompt", () => {
         totalTokens: 135,
       },
     });
-    expect(kinds(updates)).toEqual(["agent_message_chunk", "usage_update", "usage_update"]);
-    expect(updates[0].update).toMatchObject({ content: { type: "text", text: "Hello" } });
+    expect(kinds(updates)).toEqual([
+      // The agent's first init also brings the account's model list.
+      "config_option_update",
+      "agent_message_chunk",
+      "usage_update",
+      "usage_update",
+    ]);
+    expect(said(updates)).toMatchObject({ content: { type: "text", text: "Hello" } });
     expect(fake.prompts[0].message.content).toEqual([{ type: "text", text: "hi" }]);
   });
 
@@ -238,6 +257,62 @@ describe("session/prompt", () => {
     };
     const { prompt } = await connect(fakeQuery(crash));
     await expect(prompt()).rejects.toThrow(/exited with code 1/);
+  });
+});
+
+describe("the model picker", () => {
+  it("offers aliases at first and the account's models once the agent is up", async () => {
+    const fake = fakeQuery(hello);
+    const { editor, prompt, updates, sessionId } = await connect(fake);
+    const session = await editor.request(methods.agent.session.new, {
+      cwd: "/repo",
+      mcpServers: [],
+    });
+    const option = session.configOptions?.[0];
+    expect(option).toMatchObject({ id: "model", type: "select", currentValue: "default" });
+    const values =
+      option?.type === "select" ? option.options.map((o) => ("value" in o ? o.value : o.name)) : [];
+    expect(values).toEqual(["default", "opus", "sonnet", "haiku"]);
+
+    await prompt();
+    const offered = updates
+      .map((u) => u.update)
+      .find((u) => u.sessionUpdate === "config_option_update");
+    expect(offered?.configOptions[0]).toMatchObject({
+      id: "model",
+      currentValue: "default",
+      options: [
+        { value: "default" },
+        { value: "sonnet", name: "Sonnet 5" },
+        { value: "haiku", name: "Haiku 4.5" },
+      ],
+    });
+    expect(sessionId).toBeTruthy();
+  });
+
+  it("switches the model of a running agent and of the ones after it", async () => {
+    const fake = fakeQuery(hello, hello);
+    const { editor, prompt, sessionId } = await connect(fake);
+    await prompt();
+
+    const set = await editor.request(methods.agent.session.setConfigOption, {
+      sessionId,
+      configId: "model",
+      value: "haiku",
+    });
+    expect(fake.models).toEqual(["haiku"]);
+    expect(set.configOptions[0]).toMatchObject({ id: "model", currentValue: "haiku" });
+
+    // A later agent of the same session starts on the chosen model.
+    fake.starts.length = 0;
+    await editor.notify(methods.agent.session.cancel, { sessionId });
+    await expect(
+      editor.request(methods.agent.session.setConfigOption, {
+        sessionId,
+        configId: "thinking",
+        value: "high",
+      }),
+    ).rejects.toThrow(/unknown option/);
   });
 });
 
@@ -353,8 +428,11 @@ describe("permissions", () => {
       OPTION.allowAlways,
       OPTION.reject,
     ]);
-    expect(kinds(updates).slice(0, 2)).toEqual(["tool_call", "tool_call_update"]);
-    expect(updates.at(-3)?.update).toMatchObject({ content: { type: "text", text: "Written." } });
+    expect(kinds(updates).filter((k) => k.startsWith("tool_call"))).toEqual([
+      "tool_call",
+      "tool_call_update",
+    ]);
+    expect(said(updates)).toMatchObject({ content: { type: "text", text: "Written." } });
   });
 
   it("passes a rejection back to the agent", async () => {
