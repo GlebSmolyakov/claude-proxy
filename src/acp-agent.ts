@@ -34,6 +34,7 @@ import {
 import type {
   AccountInfo,
   CanUseTool,
+  OnElicitation,
   McpServerConfig,
   PermissionResult,
   SDKMessage,
@@ -50,7 +51,7 @@ import { type Editor, editorTools, insideWorkspace, READ_TOOL } from "./editor-t
 import { log } from "./log.js";
 import { availableModes, CANCELLED, decide, isMode, permissionOptions } from "./permissions.js";
 import { promptContent } from "./prompt.js";
-import { answersFrom, questionForm, questionsOf } from "./questions.js";
+import { answersFrom, mcpForm, mcpResult, questionForm, questionsOf } from "./questions.js";
 import { type LiveQuery, type RunningPrompt, Session } from "./session.js";
 import { type Input, toolInfo } from "./tools.js";
 import { UpdateMapper } from "./updates.js";
@@ -400,6 +401,7 @@ export class ClaudeProxyAgent {
         canUseTool: this.canUseTool(session),
         editorTools: tools,
         questions: this.forms,
+        ...(this.forms && { elicit: this.elicit(session) }),
         stderr,
       }),
     });
@@ -576,6 +578,28 @@ export class ClaudeProxyAgent {
         });
       }
       return decision.result;
+    };
+  }
+
+  /** Carry an MCP server's request for input to the editor and back. */
+  private elicit(session: Session): OnElicitation {
+    return async (request, { signal }) => {
+      const form = mcpForm(request, session.id);
+      if (!form) {
+        log.info(
+          `[${session.id}] Declined a ${request.mode} elicitation from ${request.serverName}`,
+        );
+        return { action: "decline" };
+      }
+      try {
+        const response = await this.editor.request(methods.client.elicitation.create, form, {
+          cancellationSignal: signal,
+        });
+        return mcpResult(response);
+      } catch (e) {
+        log.warn(`[${session.id}] Could not show the elicitation: ${(e as Error).message}`);
+        return { action: "cancel" };
+      }
     };
   }
 

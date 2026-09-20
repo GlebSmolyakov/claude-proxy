@@ -1,7 +1,14 @@
 import type { CreateElicitationResponse } from "@agentclientprotocol/sdk";
 import { describe, expect, it } from "vitest";
 
-import { answersFrom, type Question, questionForm, questionsOf } from "./questions.js";
+import {
+  answersFrom,
+  mcpForm,
+  mcpResult,
+  type Question,
+  questionForm,
+  questionsOf,
+} from "./questions.js";
 
 const COLOUR: Question = {
   question: "Which colour?",
@@ -121,5 +128,50 @@ describe("answersFrom", () => {
       input: { questions: [], answers: {} },
     });
     expect(answersFrom({ action: "cancel" }, input, [COLOUR])).toEqual({ answered: false });
+  });
+});
+
+describe("an MCP server's own request", () => {
+  const request = {
+    serverName: "tickets",
+    message: "Which ticket?",
+    mode: "form" as const,
+    requestedSchema: {
+      type: "object",
+      properties: { ticket: { type: "string", title: "Ticket" } },
+      required: ["ticket"],
+    },
+  };
+
+  it("travels to the editor as the form it already is", () => {
+    expect(mcpForm(request, "s1")).toEqual({
+      mode: "form",
+      sessionId: "s1",
+      message: "Which ticket?",
+      requestedSchema: {
+        type: "object",
+        properties: { ticket: { type: "string", title: "Ticket" } },
+        required: ["ticket"],
+      },
+    });
+  });
+
+  it("names the server when the request carries no message, and keeps a bare schema usable", () => {
+    const bare = mcpForm({ serverName: "tickets", message: "" }, "s1");
+    expect(bare?.message).toBe("tickets is asking for input.");
+    expect(bare?.requestedSchema).toEqual({ type: "object", properties: {} });
+  });
+
+  it("stays behind when it asks for something other than a form", () => {
+    expect(mcpForm({ ...request, mode: "url", url: "https://example.com" }, "s1")).toBeUndefined();
+  });
+
+  it("carries the answer back in the shape the server expects", () => {
+    expect(mcpResult({ action: "accept", content: { ticket: "AB-1" } })).toEqual({
+      action: "accept",
+      content: { ticket: "AB-1" },
+    });
+    expect(mcpResult({ action: "decline" })).toEqual({ action: "decline" });
+    expect(mcpResult({ action: "cancel" })).toEqual({ action: "cancel" });
   });
 });

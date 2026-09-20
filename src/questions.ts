@@ -1,16 +1,19 @@
-// The built-in AskUserQuestion tool, shown as a form in the editor.
+// What the agent asks the user, shown as a form in the editor.
 //
-// The CLI asks for permission to run the tool, and that is where the host
-// steps in: it turns the questions into an ACP form elicitation and hands
-// the answers back as the tool's own input, which is where the tool reads
-// them from.
+// Two things ask. The built-in AskUserQuestion tool asks through the
+// permission callback, so the host turns its questions into an ACP form and
+// hands the answers back as the tool's own input. An MCP server asks through
+// the SDK's elicitation callback, and its request is already a form: it only
+// needs carrying across.
 
 import type {
   CreateElicitationRequest,
   CreateElicitationResponse,
   ElicitationPropertySchema,
+  ElicitationSchema,
   EnumOption,
 } from "@agentclientprotocol/sdk";
+import type { ElicitationRequest, ElicitationResult } from "@anthropic-ai/claude-agent-sdk";
 
 import type { Input } from "./tools.js";
 
@@ -164,5 +167,54 @@ export function answersFrom(
       answers,
       ...(Object.keys(notes).length > 0 && { annotations: notes }),
     },
+  };
+}
+
+// ── An MCP server's own request ─────────────────────────────────
+
+type ElicitationContent = Record<string, string | number | boolean | string[]>;
+
+/**
+ * An MCP elicitation as an ACP form. Only form mode travels: a `url`
+ * elicitation asks the user to finish something in a browser, which needs a
+ * channel back that this host does not have yet.
+ */
+export function mcpForm(
+  request: ElicitationRequest,
+  sessionId: string,
+): Extract<CreateElicitationRequest, { mode: "form" }> | undefined {
+  if (request.mode !== undefined && request.mode !== "form") {
+    return undefined;
+  }
+  return {
+    mode: "form",
+    sessionId,
+    message: request.message || `${request.serverName} is asking for input.`,
+    requestedSchema: schemaOf(request.requestedSchema),
+  };
+}
+
+/** What the user did with the form, in the shape the MCP server expects. */
+export function mcpResult(response: CreateElicitationResponse): ElicitationResult {
+  if (response.action === "accept") {
+    // ACP's values are exactly the primitives MCP allows back.
+    const content = (response as { content?: ElicitationContent }).content;
+    return { action: "accept", ...(content && { content }) };
+  }
+  return { action: response.action === "decline" ? "decline" : "cancel" };
+}
+
+/** An MCP schema is already JSON Schema; this keeps only what ACP declares. */
+function schemaOf(schema: Record<string, unknown> | undefined): ElicitationSchema {
+  const properties = schema?.properties;
+  const required = schema?.required;
+  return {
+    type: "object",
+    ...(properties !== null && typeof properties === "object"
+      ? { properties: properties as Record<string, ElicitationPropertySchema> }
+      : { properties: {} }),
+    ...(Array.isArray(required) && { required: required.filter((r) => typeof r === "string") }),
+    ...(typeof schema?.title === "string" && { title: schema.title }),
+    ...(typeof schema?.description === "string" && { description: schema.description }),
   };
 }

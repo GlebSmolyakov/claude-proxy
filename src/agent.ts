@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 
 import type {
   CanUseTool,
+  OnElicitation,
   Options,
   Query,
   SDKMessage,
@@ -58,6 +59,8 @@ export interface AgentOptions {
   editorTools?: EditorTools;
   /** The editor can show the agent's questions as a form. */
   questions: boolean;
+  /** Carries an MCP server's request for input to the editor, where it can be shown. */
+  elicit?: OnElicitation;
   stderr: (data: string) => void;
 }
 
@@ -84,6 +87,7 @@ export function buildOptions(o: AgentOptions): Options {
     canUseTool: o.canUseTool,
     // Asking is only worth it where the editor can show the form.
     ...(o.questions ? {} : { disallowedTools: ["AskUserQuestion"] }),
+    ...(o.elicit && { onElicitation: o.elicit }),
     // The ACP session id is the CLI's session id, so the next prompt finds the transcript.
     ...(o.resume ? { resume: s.id } : { sessionId: s.id }),
     pathToClaudeCodeExecutable: o.executable,

@@ -769,6 +769,38 @@ describe("the agent's questions", () => {
   });
 });
 
+describe("an MCP server asking for input", () => {
+  it("reaches the user through the same dialog and answers the server", async () => {
+    const asking = async function* (options: Options): AsyncGenerator<SDKMessage> {
+      yield init();
+      const answer = await options.onElicitation!(
+        {
+          serverName: "tickets",
+          message: "Which ticket?",
+          mode: "form",
+          requestedSchema: { type: "object", properties: { ticket: { type: "string" } } },
+        },
+        { signal: new AbortController().signal, requestId: "e1" },
+      );
+      yield messageStart("msg_1");
+      yield text(JSON.stringify(answer));
+      yield result();
+    };
+    const { prompt, forms, updates } = await connect(
+      fakeQuery(asking),
+      undefined,
+      undefined,
+      undefined,
+      () => ({ action: "accept", content: { ticket: "AB-1" } }),
+    );
+    await prompt();
+    expect(forms[0]).toMatchObject({ mode: "form", message: "Which ticket?" });
+    expect(said(updates)).toMatchObject({
+      content: { text: '{"action":"accept","content":{"ticket":"AB-1"}}' },
+    });
+  });
+});
+
 describe("session/cancel and session/set_mode", () => {
   const waiting = async function* (
     _options: Options,

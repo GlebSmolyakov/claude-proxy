@@ -15,7 +15,8 @@ most useful first.
       a background command's output cannot be read back: it only goes to the
       terminal the user watches.
 - [ ] Subagents show only their tool calls; their text is not forwarded.
-- [ ] MCP elicitations are still declined by the SDK itself.
+- [ ] A `url` elicitation from an MCP server is declined: finishing one in a
+      browser needs a channel back that this host does not have.
 - [ ] Thinking level, effort and fast mode are not session config options,
       though the picker they would live in already exists.
 
