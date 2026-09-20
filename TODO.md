@@ -6,9 +6,6 @@ queue, most useful first.
 
 ## For real work in an editor
 
-- [ ] **`session/close` and idle sessions.** An agent lives as long as the
-      whole connection. Close a tab and its CLI process stays. A day of work
-      piles them up.
 - [ ] **A terminal for `Bash`.** ACP has `terminal/create`, and the official
       adapter streams a command's output into the editor's terminal. Here the
       output arrives once, whole, as text on the card.

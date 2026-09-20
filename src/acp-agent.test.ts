@@ -17,7 +17,7 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import { type AgentQuery, type RunQuery } from "./agent.js";
-import { createApp, type HostOptions } from "./acp-agent.js";
+import { type ClaudeProxyAgent, createApp, type HostOptions } from "./acp-agent.js";
 import { OPTION } from "./permissions.js";
 import {
   init,
@@ -125,6 +125,7 @@ async function connect(
   const updates: SessionNotification[] = [];
   const asked: RequestPermissionRequest[] = [];
   const forms: CreateElicitationRequest[] = [];
+  let host!: ClaudeProxyAgent;
   const connection = acpClient({ name: "test-editor" })
     .onRequest(methods.client.elicitation.create, (ctx) => {
       forms.push(ctx.params);
@@ -138,13 +139,17 @@ async function connect(
       return answer(ctx.params);
     })
     .connect(
-      createApp({
-        executable: "/bin/claude",
-        permissionMode: "default",
-        runQuery: fake.runQuery,
-        readSession,
-        version: "0.0.0-test",
-      }),
+      createApp(
+        {
+          executable: "/bin/claude",
+          permissionMode: "default",
+          runQuery: fake.runQuery,
+          readSession,
+          idleMs: 30 * 60_000,
+          version: "0.0.0-test",
+        },
+        (h) => (host = h),
+      ),
     );
   const editor = connection.agent;
   await editor.request(methods.agent.initialize, {
@@ -160,7 +165,7 @@ async function connect(
       sessionId,
       prompt: [{ type: "text", text: t }],
     });
-  return { editor, sessionId, updates, asked, forms, prompt, connection };
+  return { editor, sessionId, updates, asked, forms, prompt, connection, host: () => host };
 }
 
 const kinds = (updates: SessionNotification[]) => updates.map((u) => u.update.sessionUpdate);
@@ -184,6 +189,7 @@ describe("initialize and session/new", () => {
         permissionMode: "acceptEdits",
         runQuery: fakeQuery(hello).runQuery,
         readSession: async () => [],
+        idleMs: 30 * 60_000,
         version: "1.2.3",
       }),
     );
@@ -349,6 +355,77 @@ describe("session/prompt", () => {
     };
     const { prompt } = await connect(fakeQuery(crash));
     await expect(prompt()).rejects.toThrow(/exited with code 1/);
+  });
+});
+
+describe("closing and idling", () => {
+  it("stops the agent of a closed session and forgets it", async () => {
+    const fake = fakeQuery(hello);
+    const { editor, prompt, sessionId } = await connect(fake);
+    await prompt();
+    await editor.request(methods.agent.session.close, { sessionId });
+    expect(fake.closes).toBe(1);
+    await expect(
+      editor.request(methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "hi" }],
+      }),
+    ).rejects.toThrow(/unknown session/);
+  });
+
+  it("cancels a running turn before closing", async () => {
+    const waiting = async function* (
+      _options: Options,
+      controls: { interrupted: Promise<void> },
+    ): AsyncGenerator<SDKMessage> {
+      yield init();
+      yield messageStart("msg_1");
+      yield text("Working");
+      await controls.interrupted;
+      yield result({ subtype: "error_during_execution", is_error: true, errors: ["Interrupted"] });
+    };
+    const fake = fakeQuery(waiting);
+    const { editor, prompt, sessionId, updates } = await connect(fake);
+    const running = prompt();
+    await waitFor(() => updates.length > 0);
+    await editor.request(methods.agent.session.close, { sessionId });
+    await expect(running).resolves.toEqual({ stopReason: "cancelled" });
+    expect(fake.interrupts).toBe(1);
+  });
+
+  it("stops an idle agent but keeps the session, which the next prompt resumes", async () => {
+    const fake = fakeQuery(hello, hello);
+    const { prompt, sessionId, host } = await connect(fake);
+    await prompt();
+    expect(fake.starts).toHaveLength(1);
+
+    host().closeIdle(Date.now() + 31 * 60_000);
+    expect(fake.closes).toBe(1);
+
+    await expect(prompt()).resolves.toMatchObject({ stopReason: "end_turn" });
+    expect(fake.starts).toHaveLength(2);
+    expect(fake.starts[1].resume).toBe(sessionId);
+  });
+
+  it("leaves a busy session alone", async () => {
+    const waiting = async function* (
+      _options: Options,
+      controls: { interrupted: Promise<void> },
+    ): AsyncGenerator<SDKMessage> {
+      yield init();
+      yield messageStart("msg_1");
+      yield text("Working");
+      await controls.interrupted;
+      yield result();
+    };
+    const fake = fakeQuery(waiting);
+    const { editor, prompt, sessionId, updates, host } = await connect(fake);
+    const running = prompt();
+    await waitFor(() => updates.length > 0);
+    host().closeIdle(Date.now() + 31 * 60_000);
+    expect(fake.closes).toBe(0);
+    await editor.notify(methods.agent.session.cancel, { sessionId });
+    await running;
   });
 });
 

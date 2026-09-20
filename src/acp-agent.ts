@@ -10,6 +10,8 @@ import {
   type AuthenticateResponse,
   type ClientCapabilities,
   type CancelNotification,
+  type CloseSessionRequest,
+  type CloseSessionResponse,
   type InitializeRequest,
   type InitializeResponse,
   type LoadSessionRequest,
@@ -54,6 +56,8 @@ import { UpdateMapper } from "./updates.js";
 
 /** After an interrupt, how long a prompt may take to wind down before its process is stopped. */
 const CANCEL_GRACE_MS = 5_000;
+/** How often idle agents are looked for. */
+const SWEEP_EVERY_MS = 60_000;
 const STDERR_TAIL_LINES = 5;
 
 export interface HostOptions {
@@ -65,6 +69,8 @@ export interface HostOptions {
   permissionMode: PermissionMode;
   /** Model of every session; the CLI's own default when absent. */
   model?: string;
+  /** Stop an agent nobody has used for this long; 0 keeps every agent running. */
+  idleMs: number;
   runQuery: RunQuery;
   version: string;
 }
@@ -101,6 +107,7 @@ export function createApp(
     .onRequest(methods.agent.session.setConfigOption, (ctx) =>
       host.setSessionConfigOption(ctx.params),
     )
+    .onRequest(methods.agent.session.close, (ctx) => host.closeSession(ctx.params))
     .onNotification(methods.agent.session.cancel, (ctx) => host.cancel(ctx.params));
 }
 
@@ -111,10 +118,18 @@ export class ClaudeProxyAgent {
   /** The editor can show a form, so the agent may ask its questions. */
   private forms = false;
 
+  private readonly sweep: NodeJS.Timeout;
+
   constructor(
     private readonly editor: Editor,
     private readonly options: HostOptions,
-  ) {}
+  ) {
+    // A short idle limit deserves a short look; a long one costs nothing to wait for.
+    const every = Math.max(1_000, Math.min(SWEEP_EVERY_MS, options.idleMs || SWEEP_EVERY_MS));
+    this.sweep = setInterval(() => this.closeIdle(), every);
+    // An idle agent is worth stopping, not worth keeping the host alive for.
+    this.sweep.unref();
+  }
 
   initialize(params: InitializeRequest): InitializeResponse {
     this.capabilities = params.clientCapabilities;
@@ -123,6 +138,7 @@ export class ClaudeProxyAgent {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
         loadSession: true,
+        sessionCapabilities: { close: {} },
         promptCapabilities: { image: true, embeddedContext: true },
         mcpCapabilities: { http: true, sse: true },
       },
@@ -262,8 +278,46 @@ export class ClaudeProxyAgent {
     return {};
   }
 
+  /** The editor is done with this session: stop its agent and forget it. */
+  async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
+    const session = this.session(params.sessionId);
+    const running = session.running;
+    if (running) {
+      await this.cancel({ sessionId: session.id });
+      await running.done;
+    }
+    session.live?.query.close();
+    session.live = undefined;
+    this.sessions.delete(session.id);
+    log.info(`[${session.id}] Closed`);
+    return {};
+  }
+
+  /**
+   * Stop agents nobody has talked to for a while. The session stays: the CLI
+   * keeps the conversation, and the next prompt starts an agent that resumes
+   * it.
+   */
+  closeIdle(now = Date.now()): void {
+    if (this.options.idleMs <= 0) {
+      return;
+    }
+    for (const session of this.sessions.values()) {
+      const idle = now - session.lastUsedAt;
+      if (!session.live || session.running || idle < this.options.idleMs) {
+        continue;
+      }
+      const since =
+        idle >= 60_000 ? `${Math.round(idle / 60_000)} min` : `${Math.round(idle / 1000)} s`;
+      log.info(`[${session.id}] Idle for ${since}, stopping its agent`);
+      session.live.query.close();
+      session.live = undefined;
+    }
+  }
+
   /** The editor went away: stop every agent. */
   closeAll(): void {
+    clearInterval(this.sweep);
     for (const session of this.sessions.values()) {
       session.live?.query.close();
       session.live = undefined;
@@ -330,6 +384,7 @@ export class ClaudeProxyAgent {
       done: new Promise((resolve) => (finish = resolve)),
     };
     session.running = running;
+    session.lastUsedAt = Date.now();
     live.input.push(userMessage(content));
 
     const mapper = new UpdateMapper(session);
@@ -365,6 +420,7 @@ export class ClaudeProxyAgent {
       run.died = true;
     } finally {
       session.running = undefined;
+      session.lastUsedAt = Date.now();
       finish();
     }
     run.cancelled = running.cancelled;

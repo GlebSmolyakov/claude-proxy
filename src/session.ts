@@ -38,6 +38,8 @@ export interface RunningPrompt {
 export class Session {
   /** The running agent, until it ends or is stopped. */
   live: LiveQuery | undefined;
+  /** When the session last had a turn, so idle agents can be stopped. */
+  lastUsedAt = Date.now();
   /**
    * `cwd` with its symlinks resolved. Tool inputs carry resolved paths, so
    * this is what they shorten against in a card's title.

@@ -22,7 +22,8 @@ const USAGE = `Usage: claude-proxy [--permission-mode MODE] [--model MODEL]
 An ACP agent on stdio: an editor starts it and talks to it over stdin and stdout.
 
   --permission-mode    Mode of new sessions: ${MODES.join(", ")} [default: default]
-  --model              Model of every session: an alias or a full id [default: the CLI's own]`;
+  --model              Model of every session: an alias or a full id [default: the CLI's own]
+  --idle-minutes       Stop an agent left unused this long; 0 keeps it [default: 30]`;
 
 function fail(message: string): never {
   log.error(message);
@@ -39,6 +40,7 @@ const { values } = (() => {
       options: {
         "permission-mode": { type: "string", default: "default" },
         model: { type: "string" },
+        "idle-minutes": { type: "string", default: "30" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -66,6 +68,11 @@ try {
   fail((e as Error).message);
 }
 
+const idleMinutes = Number(values["idle-minutes"]);
+if (!Number.isFinite(idleMinutes) || idleMinutes < 0) {
+  fail(`Invalid --idle-minutes '${values["idle-minutes"]}'`);
+}
+
 let executable: string;
 try {
   executable = claudeExecutable();
@@ -85,6 +92,7 @@ const options = {
   executable,
   permissionMode: permissionMode as PermissionMode,
   model,
+  idleMs: idleMinutes * 60_000,
   runQuery: query,
   readSession: getSessionMessages,
   version,
