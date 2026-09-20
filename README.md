@@ -57,13 +57,14 @@ An agent nobody has used for 30 minutes is stopped and its session stays behind.
 
 Every message from the SDK becomes a `session/update`:
 
-| From the agent           | In the editor                                 |
-| ------------------------ | --------------------------------------------- |
-| text and thinking        | the answer as it is written                   |
-| the start of a tool call | a card for the action                         |
-| its input and its result | title, the diff of an edit, output, status    |
-| `TodoWrite` and tasks    | the plan as a list                            |
-| token counts             | what the context holds and what the turn cost |
+| From the agent           | In the editor                                  |
+| ------------------------ | ---------------------------------------------- |
+| text and thinking        | the answer as it is written                    |
+| the start of a tool call | a card for the action                          |
+| its input and its result | title, the diff of an edit, output, status     |
+| `TodoWrite` and tasks    | the plan as a list                             |
+| token counts             | what the context holds and what the turn cost  |
+| subscription spend       | a word when a limit window crosses a threshold |
 
 A card opens as soon as the tool is named and is refined when its full input arrives: first "Edit", then "Edit src/a.ts" with the diff.
 
@@ -93,7 +94,7 @@ Reading without a dialog works only in the session's folders, and a folder has t
 
 ### Old sessions
 
-`session/load` reads the conversation the CLI saved and replays it as events: the user's messages, the agent's text and thinking, a card per tool call with its result, the plan. The next prompt then carries on in that same session.
+`session/list` names the conversations the CLI saved under a folder: their ids, titles and when they were last touched, fifty at a time with a cursor for the rest. `session/load` reads the conversation the CLI saved and replays it as events: the user's messages, the agent's text and thinking, a card per tool call with its result, the plan. The next prompt then carries on in that same session.
 
 ## Options
 

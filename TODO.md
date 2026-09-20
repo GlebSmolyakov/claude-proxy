@@ -8,9 +8,6 @@ most useful first.
 
 ## Next, in this order
 
-- [ ] **A list of past sessions.** `session/load` is here, `session/list` is
-      not, so an editor cannot offer yesterday's conversation. The SDK lists
-      sessions, titles them and renames them.
 - [ ] **A proxy for Air's browser.** Its own MCP server drives the preview:
       clicks, console, network, screenshots. Worth it when a web project
       needs it, and worth proxying rather than passing through so a
