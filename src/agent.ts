@@ -16,6 +16,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 
+import { type FileTools, SERVER } from "./files.js";
 import { ALLOW_BYPASS } from "./permissions.js";
 import type { Session } from "./session.js";
 
@@ -46,16 +47,21 @@ export interface AgentOptions {
   executable: string;
   /** Asks the editor about actions that need approval. */
   canUseTool: CanUseTool;
+  /** Reading and writing through the editor, when it serves files. */
+  files?: FileTools;
   stderr: (data: string) => void;
 }
 
 export function buildOptions(o: AgentOptions): Options {
   const s = o.session;
+  const mcpServers = { ...s.mcpServers, ...(o.files && { [SERVER]: o.files.server }) };
   return {
     ...(o.model !== undefined && { model: o.model }),
     cwd: s.cwd,
     ...(s.additionalDirectories.length > 0 && { additionalDirectories: s.additionalDirectories }),
-    ...(Object.keys(s.mcpServers).length > 0 && { mcpServers: s.mcpServers }),
+    ...(Object.keys(mcpServers).length > 0 && { mcpServers }),
+    // Read, Write and Edit run through the editor's buffers when it has them.
+    ...(o.files && { toolAliases: o.files.aliases }),
     // Claude Code's prompt, tools and settings from every source; the last
     // is what brings CLAUDE.md in.
     systemPrompt: { type: "preset", preset: "claude_code" },

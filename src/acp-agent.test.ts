@@ -91,6 +91,10 @@ async function connect(
   answer: (request: RequestPermissionRequest) => RequestPermissionResponse = () => ({
     outcome: { outcome: "selected", optionId: OPTION.allow },
   }),
+  fs: { readTextFile: boolean; writeTextFile: boolean } = {
+    readTextFile: false,
+    writeTextFile: false,
+  },
 ) {
   const updates: SessionNotification[] = [];
   const asked: RequestPermissionRequest[] = [];
@@ -113,7 +117,7 @@ async function connect(
   const editor = connection.agent;
   await editor.request(methods.agent.initialize, {
     protocolVersion: PROTOCOL_VERSION,
-    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+    clientCapabilities: { fs },
   });
   const { sessionId } = await editor.request(methods.agent.session.new, {
     cwd: "/repo",
@@ -236,6 +240,77 @@ describe("session/prompt", () => {
     };
     const { prompt } = await connect(fakeQuery(crash));
     await expect(prompt()).rejects.toThrow(/exited with code 1/);
+  });
+});
+
+describe("files", () => {
+  it("run through the editor when it serves them, and on disk when it does not", async () => {
+    const serving = fakeQuery(hello);
+    const { prompt } = await connect(serving, undefined, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+    await prompt();
+    expect(serving.starts[0].toolAliases).toEqual({
+      Read: "mcp__acp__read",
+      Write: "mcp__acp__write",
+      Edit: "mcp__acp__edit",
+    });
+    expect(serving.starts[0].mcpServers).toHaveProperty("acp");
+    expect(serving.starts[0].allowedTools).toBeUndefined();
+
+    const plain = fakeQuery(hello);
+    await (await connect(plain)).prompt();
+    expect(plain.starts[0].toolAliases).toBeUndefined();
+    expect(plain.starts[0].mcpServers).toBeUndefined();
+  });
+});
+
+describe("redirected reads", () => {
+  const reading = (path: string) =>
+    async function* (options: Options): AsyncGenerator<SDKMessage> {
+      yield init();
+      const input = { file_path: path };
+      yield toolUse("t1", "Read", input);
+      const decision = await options.canUseTool!("mcp__acp__read", input, {
+        signal: new AbortController().signal,
+        toolUseID: "t1",
+        requestId: "q1",
+      });
+      yield messageStart("msg_1");
+      yield text(decision?.behavior === "allow" ? "Read it." : "Refused.");
+      yield result();
+    };
+
+  it("go through without a dialog inside the session's folders", async () => {
+    const { prompt, asked, updates } = await connect(
+      fakeQuery(reading("/repo/src/a.ts")),
+      undefined,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+    );
+    await prompt();
+    expect(asked).toEqual([]);
+    const said = updates
+      .map((u) => u.update)
+      .find((u) => u.sessionUpdate === "agent_message_chunk");
+    expect(said).toMatchObject({ content: { type: "text", text: "Read it." } });
+  });
+
+  it("ask about a file outside them", async () => {
+    const { prompt, asked } = await connect(
+      fakeQuery(reading("/Users/me/.ssh/id_rsa")),
+      undefined,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+    );
+    await prompt();
+    expect(asked).toHaveLength(1);
+    expect(asked[0].toolCall.title).toBe("Read /Users/me/.ssh/id_rsa");
   });
 });
 

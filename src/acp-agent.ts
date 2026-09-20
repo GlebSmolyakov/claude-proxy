@@ -7,9 +7,10 @@ import { isAbsolute } from "node:path";
 import {
   agent as acpAgent,
   type AgentApp,
-  type AgentContext,
   type AuthenticateResponse,
+  type ClientCapabilities,
   type CancelNotification,
+  type InitializeRequest,
   type InitializeResponse,
   type McpServer,
   methods,
@@ -33,6 +34,7 @@ import type {
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 
 import { buildOptions, once, type RunQuery, userMessage } from "./agent.js";
+import { type Editor, editorFiles, insideWorkspace, READ_TOOL } from "./files.js";
 import { log } from "./log.js";
 import { availableModes, CANCELLED, decide, isMode, permissionOptions } from "./permissions.js";
 import { promptContent } from "./prompt.js";
@@ -43,9 +45,6 @@ import { UpdateMapper } from "./updates.js";
 /** After an interrupt, how long a prompt may take to wind down before its process is stopped. */
 const CANCEL_GRACE_MS = 5_000;
 const STDERR_TAIL_LINES = 5;
-
-/** The part of the connection the host talks to the editor through. */
-export type Editor = Pick<AgentContext, "request" | "notify">;
 
 export interface HostOptions {
   /** The Claude Code binary. */
@@ -81,7 +80,7 @@ export function createApp(
       host = new ClaudeProxyAgent(connection.client, options);
       onHost(host);
     })
-    .onRequest(methods.agent.initialize, () => host.initialize())
+    .onRequest(methods.agent.initialize, (ctx) => host.initialize(ctx.params))
     .onRequest(methods.agent.authenticate, () => host.authenticate())
     .onRequest(methods.agent.session.new, (ctx) => host.newSession(ctx.params))
     .onRequest(methods.agent.session.prompt, (ctx) => host.prompt(ctx.params, ctx.signal))
@@ -91,13 +90,16 @@ export function createApp(
 
 export class ClaudeProxyAgent {
   private readonly sessions = new Map<string, Session>();
+  /** What the editor said it can do, from `initialize`. */
+  private capabilities: ClientCapabilities | undefined;
 
   constructor(
     private readonly editor: Editor,
     private readonly options: HostOptions,
   ) {}
 
-  initialize(): InitializeResponse {
+  initialize(params: InitializeRequest): InitializeResponse {
+    this.capabilities = params.clientCapabilities;
     return {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
@@ -215,6 +217,10 @@ export class ClaudeProxyAgent {
         stderrTail.splice(0, stderrTail.length - STDERR_TAIL_LINES);
       }
     };
+    const files = editorFiles(
+      { sessionId: session.id, cwd: session.cwd, editor: this.editor },
+      this.capabilities,
+    );
     const query = this.options.runQuery({
       prompt: once(userMessage(content)),
       options: buildOptions({
@@ -223,6 +229,7 @@ export class ClaudeProxyAgent {
         model: this.options.model,
         executable: this.options.executable,
         canUseTool: this.canUseTool(session),
+        files,
         stderr,
       }),
     });
@@ -242,7 +249,7 @@ export class ClaudeProxyAgent {
           run.started = true;
           session.started = true;
           log.info(
-            `[${session.id}] Claude Code ${message.claude_code_version} on ${message.model}, ${resume ? "resumed" : "started"}`,
+            `[${session.id}] Claude Code ${message.claude_code_version} on ${message.model}, ${resume ? "resumed" : "started"}, files ${files ? "through the editor" : "on disk"}`,
           );
         } else if (message.type === "result") {
           run.result = message;
@@ -267,6 +274,14 @@ export class ClaudeProxyAgent {
     return async (toolName, input, { signal, suggestions, toolUseID }) => {
       if (session.running?.cancelled) {
         return CANCELLED;
+      }
+      // Reading inside the session's folders is what the built-in Read does
+      // without asking; the redirect must not turn it into a dialog.
+      if (
+        toolName === READ_TOOL &&
+        insideWorkspace(input.file_path, [session.cwd, ...session.additionalDirectories])
+      ) {
+        return { behavior: "allow", updatedInput: input };
       }
       // The call may reach this point before its message reached the editor.
       if (!session.emitted.has(toolUseID)) {

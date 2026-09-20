@@ -12,6 +12,8 @@ import type {
   ToolKind,
 } from "@agentclientprotocol/sdk";
 
+import { REDIRECTED } from "./files.js";
+
 export type Input = Record<string, unknown>;
 
 export interface ToolInfo {
@@ -47,7 +49,10 @@ export function displayPath(path: string, cwd: string): string {
   return full.startsWith(root + sep) ? relative(root, full) : path;
 }
 
-export function toolInfo(name: string, input: Input, cwd: string): ToolInfo {
+export function toolInfo(rawName: string, input: Input, cwd: string): ToolInfo {
+  // A file tool that runs through the editor shows the card of the built-in
+  // tool the model asked for.
+  const name = REDIRECTED[rawName] ?? rawName;
   const card = (
     title: string,
     kind: ToolKind,
