@@ -14,13 +14,10 @@ most useful first.
 - [ ] A redirected `Bash` has no shell that remembers `cd` between calls, and
       a background command's output cannot be read back: it only goes to the
       terminal the user watches.
-- [ ] The plan starts empty after `session/load`: the replay does not rebuild it.
 - [ ] Subagents show only their tool calls; their text is not forwarded.
 - [ ] MCP elicitations are still declined by the SDK itself.
 - [ ] Thinking level, effort and fast mode are not session config options,
       though the picker they would live in already exists.
-- [ ] A tool card carries its output twice, as content and as `rawOutput`.
-      On a large file that is traffic for nothing.
 
 ## Around the code
 

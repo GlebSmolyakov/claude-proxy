@@ -62,6 +62,7 @@ describe("UpdateMapper", () => {
     });
 
     const [closed] = m.map(toolResult("t1", "The file has been updated."));
+    // An edit keeps its diff on the card, so the raw result is what it adds.
     expect(closed).toEqual({
       sessionUpdate: "tool_call_update",
       toolCallId: "t1",
@@ -125,7 +126,6 @@ describe("UpdateMapper", () => {
         toolCallId: "t1",
         status: "failed",
         content: [{ type: "content", content: { type: "text", text: "```\nexit 1\n```" } }],
-        rawOutput: "exit 1",
       },
     ]);
   });
@@ -235,6 +235,22 @@ describe("UpdateMapper", () => {
         messageId: "msg_1",
       },
     ]);
+  });
+
+  it("rebuilds the plan while replaying a saved conversation", () => {
+    const s = session();
+    const m = new UpdateMapper(s, { replay: true });
+    m.map(toolUse("t1", "TaskCreate", { subject: "Read code", activeForm: "Reading code" }));
+    m.map(toolResult("t1", "Task #1 created successfully: Read code"));
+    m.map(toolUse("t2", "TaskUpdate", { taskId: "1", status: "in_progress" }));
+    const last = m.map(toolResult("t2", "ok"));
+    expect(last).toEqual([
+      {
+        sessionUpdate: "plan",
+        entries: [{ content: "Reading code", status: "in_progress", priority: "medium" }],
+      },
+    ]);
+    expect(s.plan.entries()).toHaveLength(1);
   });
 
   it("stays quiet about usage when no API call happened", () => {

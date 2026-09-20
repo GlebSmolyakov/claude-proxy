@@ -247,8 +247,9 @@ export class UpdateMapper {
         sessionUpdate: "tool_call_update",
         toolCallId: id,
         status: isError ? "failed" : "completed",
-        ...(extra && { content: extra }),
-        rawOutput: block.content,
+        // What the card shows is enough; sending it again as `rawOutput`
+        // doubles a large file and lets a client render it twice.
+        ...(extra ? { content: extra } : { rawOutput: block.content }),
       });
     }
     return updates;
