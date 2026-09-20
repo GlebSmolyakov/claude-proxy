@@ -9,6 +9,7 @@ import {
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
 import type {
+  AccountInfo,
   Options,
   PermissionMode,
   SDKMessage,
@@ -37,6 +38,8 @@ type Script = (
 
 interface Fake {
   runQuery: RunQuery;
+  /** What the CLI reports about the account it works under. */
+  account: AccountInfo;
   /** Models the editor asked for, through the picker. */
   models: string[];
   /** Options of every query the host started, in order. */
@@ -56,6 +59,7 @@ function fakeQuery(...scripts: Script[]): Fake {
     closes: 0,
     modes: [],
     models: [],
+    account: { email: "user@example.com", apiProvider: "firstParty" },
   };
   fake.runQuery = ({ prompt, options }) => {
     fake.starts.push(options);
@@ -82,6 +86,7 @@ function fakeQuery(...scripts: Script[]): Fake {
       setModel: async (model) => {
         fake.models.push(model ?? "default");
       },
+      accountInfo: async () => fake.account,
       supportedCommands: async () => [
         { name: "compact", description: "Compact the conversation", argumentHint: "" },
         { name: "review", description: "Review the diff", argumentHint: "[pr]" },
@@ -342,6 +347,35 @@ describe("session/prompt", () => {
     expect(fake.starts).toHaveLength(2);
     expect(fake.starts[1].resume).toBe(sessionId);
     expect(fake.starts[1].sessionId).toBeUndefined();
+  });
+
+  it("asks the editor for a sign-in when the CLI has no credential", async () => {
+    const fake = fakeQuery(hello, hello);
+    fake.account = {};
+    const { prompt } = await connect(fake);
+    await expect(prompt()).rejects.toThrow(/not logged in/);
+    // One agent, not a retry, and it is gone so a signed-in one can replace it.
+    expect(fake.starts).toHaveLength(1);
+    expect(fake.closes).toBe(1);
+
+    fake.account = { email: "user@example.com" };
+    await expect(prompt()).resolves.toMatchObject({ stopReason: "end_turn" });
+  });
+
+  it("asks for a sign-in when the API refuses the credential", async () => {
+    const refused = async function* (): AsyncGenerator<SDKMessage> {
+      yield init();
+      yield result({ is_error: true, api_error_status: 401, result: "Invalid API key" });
+    };
+    const { prompt } = await connect(fakeQuery(refused));
+    await expect(prompt()).rejects.toThrow(/not logged in/);
+  });
+
+  it("works under a third-party backend, which carries its own credential", async () => {
+    const fake = fakeQuery(hello);
+    fake.account = { apiProvider: "bedrock" };
+    const { prompt } = await connect(fake);
+    await expect(prompt()).resolves.toMatchObject({ stopReason: "end_turn" });
   });
 
   it("turns a failed turn into an error for the editor", async () => {

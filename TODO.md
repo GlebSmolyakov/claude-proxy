@@ -6,10 +6,10 @@ queue, most useful first.
 
 ## For real work in an editor
 
-- [ ] **`auth_required` when the CLI is not logged in.** Today that is error
-      text on a prompt, and the editor has nothing to offer the user.
-
 ## Smaller tails
+
+- [ ] A sign-in cannot be done from the editor. With terminal support the
+      agent could offer an auth method that runs `claude auth login` in one.
 
 - [ ] A redirected `Bash` has no shell that remembers `cd` between calls, and
       a background command's output cannot be read back: it only goes to the

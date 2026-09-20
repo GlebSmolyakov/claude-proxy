@@ -32,6 +32,7 @@ import {
   type StopReason,
 } from "@agentclientprotocol/sdk";
 import type {
+  AccountInfo,
   CanUseTool,
   McpServerConfig,
   PermissionResult,
@@ -75,10 +76,16 @@ export interface HostOptions {
   version: string;
 }
 
+/** What the user is told when the CLI has no credential to work with. */
+const LOGIN_MESSAGE =
+  "Claude Code is not logged in. Run `claude auth login` in a terminal, or give it an API key through ANTHROPIC_API_KEY.";
+
 interface Run {
   result?: SDKResultMessage;
   /** The agent ended without finishing the turn. */
   died: boolean;
+  /** The CLI has nothing to authenticate with, so the turn never started. */
+  loggedOut: boolean;
   cancelled: boolean;
   error?: string;
   stderr: string;
@@ -239,7 +246,7 @@ export class ClaudeProxyAgent {
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
       let run = await this.turn(session, content);
-      if (run.died && !run.cancelled) {
+      if (run.died && !run.cancelled && !run.loggedOut) {
         // The agent died mid-conversation; a new one picks its session up.
         log.warn(`[${session.id}] The agent ended without a result, starting it again`);
         run = await this.turn(session, content);
@@ -417,7 +424,7 @@ export class ClaudeProxyAgent {
     live.input.push(userMessage(content));
 
     const mapper = new UpdateMapper(session);
-    const run: Run = { died: false, cancelled: false, stderr: "" };
+    const run: Run = { died: false, cancelled: false, loggedOut: false, stderr: "" };
     try {
       for (;;) {
         const next = await live.messages.next();
@@ -433,6 +440,11 @@ export class ClaudeProxyAgent {
               `[${session.id}] Claude Code ${message.claude_code_version} on ${message.model}`,
             );
             session.started = true;
+            if (await loggedOut(live)) {
+              log.warn(`[${session.id}] The CLI is not logged in`);
+              run.loggedOut = true;
+              break;
+            }
             await this.offerModels(session, live);
             await this.offerCommands(session, live);
           }
@@ -455,8 +467,11 @@ export class ClaudeProxyAgent {
     }
     run.cancelled = running.cancelled;
     run.stderr = live.stderrTail.join("\n");
-    // A dead agent leaves nothing to push the next prompt into.
-    if (run.died) {
+    // A dead agent leaves nothing to push the next prompt into, and a
+    // logged-out one is worth replacing once its user has signed in. The
+    // session itself stays: the CLI saved it and the next agent resumes it.
+    if (run.died || run.loggedOut) {
+      session.live?.query.close();
       session.live = undefined;
     }
     return run;
@@ -599,10 +614,32 @@ export class ClaudeProxyAgent {
   }
 }
 
+/**
+ * Whether the CLI has no credential at all. A third-party backend carries
+ * its own (AWS keys, gcloud), so only a first-party account can be empty in
+ * a way the user can fix by signing in.
+ */
+async function loggedOut(live: LiveQuery): Promise<boolean> {
+  let account: AccountInfo;
+  try {
+    account = await live.query.accountInfo();
+  } catch {
+    // An older CLI without the request is not a reason to refuse the turn.
+    return false;
+  }
+  if (account.apiProvider !== undefined && account.apiProvider !== "firstParty") {
+    return false;
+  }
+  return !account.email && !account.organization && !account.apiKeySource && !account.tokenSource;
+}
+
 /** How the prompt ended, or the error the editor shows. */
 function response(session: Session, run: Run): PromptResponse {
   if (run.cancelled) {
     return { stopReason: "cancelled" };
+  }
+  if (run.loggedOut) {
+    throw RequestError.authRequired(undefined, LOGIN_MESSAGE);
   }
   const result = run.result;
   if (!result) {
@@ -612,6 +649,10 @@ function response(session: Session, run: Run): PromptResponse {
   }
   if (result.subtype === "error_max_turns") {
     return { stopReason: "max_turn_requests", usage: usageOf(result) };
+  }
+  if (result.subtype === "success" && result.api_error_status === 401) {
+    log.warn(`[${session.id}] The API refused the credential`);
+    throw RequestError.authRequired(undefined, LOGIN_MESSAGE);
   }
   if (result.is_error) {
     const text = result.subtype === "success" ? result.result : result.errors?.join("; ");

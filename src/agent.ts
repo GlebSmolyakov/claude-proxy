@@ -37,6 +37,7 @@ export type AgentQuery = AsyncIterable<SDKMessage> &
     | "setModel"
     | "supportedModels"
     | "supportedCommands"
+    | "accountInfo"
     | "close"
   >;
 
