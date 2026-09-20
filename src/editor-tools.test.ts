@@ -10,6 +10,7 @@ import {
   editorTools,
   editTool,
   insideWorkspace,
+  narrowRoots,
   readTool,
   writeTool,
 } from "./editor-tools.js";
@@ -199,6 +200,16 @@ describe("editorTools", () => {
     expect(insideWorkspace("/Users/me/.ssh/id_rsa", roots)).toBe(false);
     expect(insideWorkspace("/repo/../etc/passwd", roots)).toBe(false);
     expect(insideWorkspace(undefined, roots)).toBe(false);
+  });
+
+  it("refuses to read without asking from a home folder or anything above it", () => {
+    const home = "/Users/me";
+    expect(narrowRoots(["/Users/me/projects/app"], home)).toEqual(["/Users/me/projects/app"]);
+    expect(narrowRoots(["/work/app"], home)).toEqual(["/work/app"]);
+    expect(narrowRoots([home], home)).toEqual([]);
+    expect(narrowRoots(["/Users"], home)).toEqual([]);
+    expect(narrowRoots(["/"], home)).toEqual([]);
+    expect(narrowRoots(["/Users/me/projects/app", home], home)).toEqual(["/Users/me/projects/app"]);
   });
 
   it("keeps the built-in card for a redirected call", () => {

@@ -10,7 +10,7 @@ import { parseArgs, promisify } from "node:util";
 import { ndJsonStream } from "@agentclientprotocol/sdk";
 import { getSessionMessages, type PermissionMode, query } from "@anthropic-ai/claude-agent-sdk";
 
-import { type ClaudeProxyAgent, createApp } from "./acp-agent.js";
+import { type Allowed, type ClaudeProxyAgent, createApp } from "./acp-agent.js";
 import { claudeExecutable } from "./agent.js";
 import { log } from "./log.js";
 import { resolveModel } from "./models.js";
@@ -24,7 +24,8 @@ An ACP agent on stdio: an editor starts it and talks to it over stdin and stdout
   --permission-mode    Mode of new sessions: ${MODES.join(", ")} [default: default]
   --model              Model of every session: an alias or a full id [default: the CLI's own]
   --idle-minutes       Stop an agent left unused this long; 0 keeps it [default: 30]
-  --login              Hand this terminal to Claude Code's own sign-in`;
+  --login              Hand this terminal to Claude Code's own sign-in
+  --allow-mcp          MCP servers of the editor the CLI may run: names, or "all" [default: none]`;
 
 function fail(message: string): never {
   log.error(message);
@@ -43,6 +44,7 @@ const { values } = (() => {
         model: { type: "string" },
         "idle-minutes": { type: "string", default: "30" },
         login: { type: "boolean" },
+        "allow-mcp": { type: "string", default: "" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -75,6 +77,15 @@ if (!Number.isFinite(idleMinutes) || idleMinutes < 0) {
   fail(`Invalid --idle-minutes '${values["idle-minutes"]}'`);
 }
 
+const allowed = values["allow-mcp"].trim();
+const allowMcp: Allowed =
+  allowed === "all"
+    ? "all"
+    : allowed
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean);
+
 let executable: string;
 try {
   executable = claudeExecutable();
@@ -103,12 +114,16 @@ const options = {
   permissionMode: permissionMode as PermissionMode,
   model,
   idleMs: idleMinutes * 60_000,
+  allowMcp,
   runQuery: query,
   readSession: getSessionMessages,
   version,
 };
 const connection = createApp(options, (h) => (host = h)).connect(stream);
-log.info(`Serving ACP on stdio (mode ${permissionMode}, model ${model ?? "the CLI's default"})`);
+log.info(
+  `Serving ACP on stdio (mode ${permissionMode}, model ${model ?? "the CLI's default"}, ` +
+    `MCP of the editor: ${allowMcp === "all" ? "all" : allowMcp.length === 0 ? "none" : allowMcp.join(", ")})`,
+);
 
 const shutdown = (reason: string) => {
   log.info(`${reason}, stopping`);

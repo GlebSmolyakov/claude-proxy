@@ -209,6 +209,21 @@ async function write(deps: Deps, path: string, content: string): Promise<void> {
 }
 
 /**
+ * Folders narrow enough to read from without asking. A home directory, the
+ * filesystem root or anything above a home is too much to hand over on the
+ * editor's word alone: reads there go to the dialog like anywhere else.
+ */
+export function narrowRoots(roots: string[], home: string): string[] {
+  const inHome = resolve(home);
+  return roots.filter((root) => {
+    const full = resolve(root);
+    // The root itself, a home directory, and every folder a home sits in.
+    const broad = full === sep || full === inHome || inHome.startsWith(`${full}${sep}`);
+    return !broad;
+  });
+}
+
+/**
  * Whether a file belongs to the session's folders. Reading one of those is
  * the agent's daily work and asks for no approval, as the built-in Read does
  * not ask; anything outside still goes to the editor's dialog.

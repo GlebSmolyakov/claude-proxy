@@ -71,6 +71,9 @@ const CANCEL_GRACE_MS = 5_000;
 const SWEEP_EVERY_MS = 60_000;
 const STDERR_TAIL_LINES = 5;
 
+/** Which MCP servers of an editor are allowed through to the CLI. */
+export type Allowed = "all" | readonly string[];
+
 export interface HostOptions {
   /** The Claude Code binary. */
   executable: string;
@@ -82,6 +85,8 @@ export interface HostOptions {
   model?: string;
   /** Stop an agent nobody has used for this long; 0 keeps every agent running. */
   idleMs: number;
+  /** MCP servers of the editor the CLI may run: their names, or every one of them. */
+  allowMcp: Allowed;
   runQuery: RunQuery;
   version: string;
 }
@@ -205,12 +210,20 @@ export class ClaudeProxyAgent {
       randomUUID(),
       params.cwd,
       params.additionalDirectories ?? [],
-      mcpServers(params.mcpServers),
+      mcpServers(params.mcpServers, this.options.allowMcp),
       this.options.permissionMode,
       this.options.model,
     );
     this.sessions.set(session.id, session);
     log.info(`[${session.id}] New session in ${session.cwd}, mode ${session.mode}`);
+    const broad = [session.cwd, ...session.additionalDirectories].filter(
+      (root) => !session.readable.includes(root),
+    );
+    if (broad.length > 0) {
+      log.warn(
+        `[${session.id}] Too broad to read without asking: ${broad.join(", ")}; every read there goes to the dialog`,
+      );
+    }
     return {
       sessionId: session.id,
       modes: { currentModeId: session.mode, availableModes: availableModes() },
@@ -243,7 +256,7 @@ export class ClaudeProxyAgent {
       params.sessionId,
       params.cwd,
       params.additionalDirectories ?? [],
-      mcpServers(params.mcpServers),
+      mcpServers(params.mcpServers, this.options.allowMcp),
       this.options.permissionMode,
       this.options.model,
     );
@@ -609,10 +622,7 @@ export class ClaudeProxyAgent {
       }
       // Reading inside the session's folders is what the built-in Read does
       // without asking; the redirect must not turn it into a dialog.
-      if (
-        toolName === READ_TOOL &&
-        insideWorkspace(input.file_path, [session.cwd, ...session.additionalDirectories])
-      ) {
+      if (toolName === READ_TOOL && insideWorkspace(input.file_path, session.readable)) {
         return { behavior: "allow", updatedInput: input };
       }
       // The call may reach this point before its message reached the editor.
@@ -777,22 +787,53 @@ function usageOf(result: SDKResultMessage): PromptResponse["usage"] {
 }
 
 /** The editor's MCP servers in the SDK's shape. Servers over ACP itself are not supported. */
-export function mcpServers(servers: McpServer[]): Record<string, McpServerConfig> {
+/**
+ * The MCP servers an editor asks for, as far as they are allowed.
+ *
+ * A stdio server is a command the CLI runs, so passing one on is running a
+ * program the editor named. Nothing is passed on unless `--allow-mcp` says
+ * so, which also keeps the editor and the CLI from meeting each other
+ * behind this host's back.
+ */
+export function mcpServers(
+  servers: McpServer[],
+  allowed: Allowed,
+): Record<string, McpServerConfig> {
   const configs: Record<string, McpServerConfig> = {};
   for (const server of servers) {
     const pairs = (list: { name: string; value: string }[]) =>
       Object.fromEntries(list.map((p) => [p.name, p.value]));
+    let config: McpServerConfig | undefined;
+    let what: string;
     if (!("type" in server)) {
-      configs[server.name] = {
+      config = {
         type: "stdio",
         command: server.command,
         args: server.args,
         env: pairs(server.env),
       };
+      what = `stdio ${[server.command, ...server.args].join(" ")}`;
     } else if (server.type === "http" || server.type === "sse") {
-      configs[server.name] = { type: server.type, url: server.url, headers: pairs(server.headers) };
+      config = { type: server.type, url: server.url, headers: pairs(server.headers) };
+      what = `${server.type} ${server.url}`;
     } else {
-      log.warn(`Skipping MCP server '${server.name}': transport '${server.type}' is not supported`);
+      what = `transport '${server.type}', which this host does not speak`;
+    }
+    // Secrets live in the values of env and headers; only their names are logged.
+    const carried = !("type" in server)
+      ? server.env.map((variable) => variable.name)
+      : server.type === "http" || server.type === "sse"
+        ? server.headers.map((header) => header.name)
+        : [];
+    const named = carried.length === 0 ? "" : `, carrying ${carried.join(", ")}`;
+    if (config && (allowed === "all" || allowed.includes(server.name))) {
+      configs[server.name] = config;
+      log.info(`MCP server '${server.name}' of the editor: ${what}${named}`);
+    } else {
+      log.info(
+        `MCP server '${server.name}' of the editor left out: ${what}${named}` +
+          (config ? `; --allow-mcp ${server.name} passes it to the CLI` : ""),
+      );
     }
   }
   return configs;

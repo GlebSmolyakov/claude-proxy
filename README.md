@@ -85,6 +85,12 @@ What the editor did not claim stays with the agent: files go to disk, commands r
 
 The model list starts as the aliases and is replaced by what the account really has once an agent has run. The editor gets the CLI's slash commands at the same time, your own among them; a command typed as a prompt runs and answers as a message from the agent.
 
+### The line between the editor and the CLI
+
+The editor and the CLI know nothing about each other. The editor speaks ACP to the host, the CLI works as a plain CLI, and everything in between happens here. So the MCP servers an editor passes in `session/new` do not reach the CLI by default: they would meet behind the host's back, and a stdio server is also a program the editor named being run. Every such server is logged with its command or its address, and `--allow-mcp Air` or `--allow-mcp all` lets them through.
+
+Reading without a dialog works only in the session's folders, and a folder has to be narrow enough for it. A home directory, the filesystem root and anything a home sits in are too broad: every file there goes through the dialog.
+
 ### Old sessions
 
 `session/load` reads the conversation the CLI saved and replays it as events: the user's messages, the agent's text and thinking, a card per tool call with its result, the plan. The next prompt then carries on in that same session.

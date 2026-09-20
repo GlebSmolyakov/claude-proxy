@@ -2,6 +2,7 @@
 // running, and what the editor has been shown so far.
 
 import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
 
 import type { SessionConfigSelectOption, SessionUpdate } from "@agentclientprotocol/sdk";
 import type {
@@ -12,6 +13,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import type { AgentQuery, Pushable } from "./agent.js";
+import { narrowRoots } from "./editor-tools.js";
 import { type Input, TaskPlan, toolInfo } from "./tools.js";
 
 /** Until the first result says otherwise. */
@@ -45,6 +47,8 @@ export class Session {
    * this is what they shorten against in a card's title.
    */
   readonly displayRoot: string;
+  /** Folders whose files the agent reads without asking; see `narrowRoots`. */
+  readonly readable: string[];
   /** The CLI has saved this session's transcript; later prompts resume it. */
   started = false;
   running: RunningPrompt | undefined;
@@ -77,6 +81,7 @@ export class Session {
     public model: string | undefined,
   ) {
     this.displayRoot = resolved(cwd);
+    this.readable = narrowRoots([cwd, ...additionalDirectories], homedir());
   }
 
   /**

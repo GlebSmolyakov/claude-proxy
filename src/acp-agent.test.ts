@@ -18,7 +18,7 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import { type AgentQuery, type RunQuery } from "./agent.js";
-import { type ClaudeProxyAgent, createApp, type HostOptions } from "./acp-agent.js";
+import { type ClaudeProxyAgent, createApp, type HostOptions, mcpServers } from "./acp-agent.js";
 import { OPTION } from "./permissions.js";
 import {
   init,
@@ -162,6 +162,7 @@ async function connect(
           runQuery: fake.runQuery,
           readSession,
           idleMs: 30 * 60_000,
+          allowMcp: [],
           version: "0.0.0-test",
         },
         (h) => (host = h),
@@ -206,6 +207,7 @@ describe("initialize and session/new", () => {
         runQuery: fakeQuery(hello).runQuery,
         readSession: async () => [],
         idleMs: 30 * 60_000,
+        allowMcp: [],
         version: "1.2.3",
       }),
     );
@@ -232,6 +234,29 @@ describe("initialize and session/new", () => {
   });
 });
 
+describe("MCP servers of the editor", () => {
+  const stdio = { name: "Air", command: "/tmp/mcp-proxy", args: ["--port", "65110"], env: [] };
+  const http = {
+    name: "tickets",
+    type: "http" as const,
+    url: "https://example.com/mcp",
+    headers: [{ name: "Authorization", value: "secret" }],
+  };
+
+  it("stay with the editor unless they are allowed by name", () => {
+    expect(mcpServers([stdio, http], [])).toEqual({});
+    expect(mcpServers([stdio, http], ["Air"])).toEqual({
+      Air: { type: "stdio", command: "/tmp/mcp-proxy", args: ["--port", "65110"], env: {} },
+    });
+    expect(Object.keys(mcpServers([stdio, http], "all"))).toEqual(["Air", "tickets"]);
+  });
+
+  it("are left out when their transport is one this host does not speak", () => {
+    const overAcp = { name: "editor", type: "acp" as const };
+    expect(mcpServers([overAcp as never], "all")).toEqual({});
+  });
+});
+
 describe("signing in", () => {
   it("is offered when the client can run the agent in a terminal", async () => {
     const connection = acpClient({ name: "test-editor" }).connect(
@@ -241,6 +266,7 @@ describe("signing in", () => {
         runQuery: fakeQuery(hello).runQuery,
         readSession: async () => [],
         idleMs: 0,
+        allowMcp: [],
         version: "1.2.3",
       }),
     );
