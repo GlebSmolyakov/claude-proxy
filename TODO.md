@@ -1,16 +1,16 @@
 # What is left
 
-The five steps of the architecture note are done, and so are the model
-picker, `session/load` and the agent's own questions. What follows is the
-queue, most useful first.
-
-## For real work in an editor
+The five steps of the architecture note are done, and so is what an editor
+needs for daily work: the model picker, `session/load`, the agent's own
+questions, closing and idling sessions, a terminal for commands, slash
+commands, and a sign-in the editor can act on. What follows is the queue,
+most useful first.
 
 ## Smaller tails
 
-- [ ] A sign-in cannot be done from the editor. With terminal support the
-      agent could offer an auth method that runs `claude auth login` in one.
-
+- [ ] A sign-in cannot be started from the editor. Where the client has
+      terminals, the agent could offer an auth method that runs
+      `claude auth login` in one.
 - [ ] A redirected `Bash` has no shell that remembers `cd` between calls, and
       a background command's output cannot be read back: it only goes to the
       terminal the user watches.
