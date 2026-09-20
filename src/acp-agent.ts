@@ -15,6 +15,8 @@ import {
   type CloseSessionResponse,
   type InitializeRequest,
   type InitializeResponse,
+  type ListSessionsRequest,
+  type ListSessionsResponse,
   type LoadSessionRequest,
   type LoadSessionResponse,
   type McpServer,
@@ -39,6 +41,7 @@ import type {
   McpServerConfig,
   PermissionResult,
   SDKMessage,
+  SDKSessionInfo,
   SessionMessage,
   PermissionMode,
   SDKResultMessage,
@@ -70,6 +73,8 @@ import { UpdateMapper } from "./updates.js";
 const CANCEL_GRACE_MS = 5_000;
 /** How often idle agents are looked for. */
 const SWEEP_EVERY_MS = 60_000;
+/** How many saved conversations one `session/list` answers with. */
+const PAGE = 50;
 const STDERR_TAIL_LINES = 5;
 
 /** Which MCP servers of an editor are allowed through to the CLI. */
@@ -80,6 +85,12 @@ export interface HostOptions {
   executable: string;
   /** Reads a saved conversation back; tests put a fake here. */
   readSession: (sessionId: string, options: { dir: string }) => Promise<SessionMessage[]>;
+  /** Lists the conversations the CLI has saved. */
+  listSessions: (options: {
+    dir?: string;
+    limit?: number;
+    offset?: number;
+  }) => Promise<SDKSessionInfo[]>;
   /** Mode of new sessions. */
   permissionMode: PermissionMode;
   /** Model of every session; the CLI's own default when absent. */
@@ -138,6 +149,7 @@ export function createApp(
     .onRequest(methods.agent.authenticate, (ctx) => host.authenticate(ctx.params))
     .onRequest(methods.agent.session.new, (ctx) => host.newSession(ctx.params))
     .onRequest(methods.agent.session.load, (ctx) => host.loadSession(ctx.params))
+    .onRequest(methods.agent.session.list, (ctx) => host.listSessions(ctx.params))
     .onRequest(methods.agent.session.prompt, (ctx) => host.prompt(ctx.params, ctx.signal))
     .onRequest(methods.agent.session.setMode, (ctx) => host.setSessionMode(ctx.params))
     .onRequest(methods.agent.session.setConfigOption, (ctx) =>
@@ -183,7 +195,7 @@ export class ClaudeProxyAgent {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
         loadSession: true,
-        sessionCapabilities: { close: {} },
+        sessionCapabilities: { close: {}, list: {} },
         promptCapabilities: { image: true, embeddedContext: true },
         mcpCapabilities: { http: true, sse: true },
       },
@@ -230,6 +242,39 @@ export class ClaudeProxyAgent {
       sessionId: session.id,
       modes: { currentModeId: session.mode, availableModes: availableModes() },
       configOptions: configOptions(session),
+    };
+  }
+
+  /** The conversations the CLI saved, newest first, a page at a time. */
+  async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
+    const from = Number(params.cursor ?? 0);
+    if (!Number.isInteger(from) || from < 0) {
+      throw RequestError.invalidParams(undefined, `'${String(params.cursor)}' is not a cursor`);
+    }
+    let found: SDKSessionInfo[];
+    try {
+      // One more than a page, to learn whether another page follows.
+      found = await this.options.listSessions({
+        ...(params.cwd != null && { dir: params.cwd }),
+        limit: PAGE + 1,
+        offset: from,
+      });
+    } catch (e) {
+      throw RequestError.internalError(
+        undefined,
+        `could not list the sessions: ${(e as Error).message}`,
+      );
+    }
+    const page = found.slice(0, PAGE);
+    return {
+      sessions: page.flatMap((info) => {
+        // A session without a folder is one this host could not reopen.
+        const cwd = info.cwd ?? params.cwd;
+        return cwd == null
+          ? []
+          : [{ sessionId: info.sessionId, cwd, ...titleOf(info), ...when(info.lastModified) }];
+      }),
+      ...(found.length > PAGE && { nextCursor: String(from + PAGE) }),
     };
   }
 
@@ -739,6 +784,22 @@ async function loggedOut(live: LiveQuery): Promise<boolean> {
     return false;
   }
   return !account.email && !account.organization && !account.apiKeySource && !account.tokenSource;
+}
+
+/** What a saved conversation is called: the user's own name for it, else what the CLI made of it. */
+function titleOf(info: SDKSessionInfo): { title?: string } {
+  const title = info.customTitle?.trim() || info.summary?.trim() || info.firstPrompt?.trim();
+  return title ? { title: title.length > 120 ? `${title.slice(0, 117)}...` : title } : {};
+}
+
+/** When it was last written, as a timestamp the editor can read. */
+function when(lastModified: number | undefined): { updatedAt?: string } {
+  if (lastModified === undefined || !Number.isFinite(lastModified)) {
+    return {};
+  }
+  // Older CLIs count in seconds, newer ones in milliseconds.
+  const ms = lastModified < 1e12 ? lastModified * 1000 : lastModified;
+  return { updatedAt: new Date(ms).toISOString() };
 }
 
 /** How the prompt ended, or the error the editor shows. */

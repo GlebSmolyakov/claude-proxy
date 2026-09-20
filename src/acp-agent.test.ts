@@ -137,6 +137,7 @@ async function connect(
   },
   readSession: HostOptions["readSession"] = async () => [],
   elicit?: (request: CreateElicitationRequest) => CreateElicitationResponse,
+  listSessions: HostOptions["listSessions"] = async () => [],
 ) {
   const updates: SessionNotification[] = [];
   const asked: RequestPermissionRequest[] = [];
@@ -161,6 +162,7 @@ async function connect(
           permissionMode: "default",
           runQuery: fake.runQuery,
           readSession,
+          listSessions,
           idleMs: 30 * 60_000,
           allowMcp: [],
           version: "0.0.0-test",
@@ -206,6 +208,7 @@ describe("initialize and session/new", () => {
         permissionMode: "acceptEdits",
         runQuery: fakeQuery(hello).runQuery,
         readSession: async () => [],
+        listSessions: async () => [],
         idleMs: 30 * 60_000,
         allowMcp: [],
         version: "1.2.3",
@@ -265,6 +268,7 @@ describe("signing in", () => {
         permissionMode: "default",
         runQuery: fakeQuery(hello).runQuery,
         readSession: async () => [],
+        listSessions: async () => [],
         idleMs: 0,
         allowMcp: [],
         version: "1.2.3",
@@ -296,6 +300,86 @@ describe("signing in", () => {
     await expect(
       connection.agent.request(methods.agent.authenticate, { methodId: "made-up" }),
     ).rejects.toThrow(/unknown authentication method/);
+  });
+});
+
+describe("session/list", () => {
+  const saved = (count: number, from = 0) =>
+    Array.from({ length: count }, (_, i) => ({
+      sessionId: `s${from + i}`,
+      summary: `Conversation ${from + i}`,
+      lastModified: 1_789_000_000_000 + i,
+      cwd: "/repo",
+    })) as never;
+
+  it("hands the editor what the CLI saved, newest first", async () => {
+    const { editor } = await connect(
+      fakeQuery(hello),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async () =>
+        [
+          {
+            sessionId: "s1",
+            summary: "Looked at the parser",
+            customTitle: "Parser work",
+            lastModified: 1_789_000_000_000,
+            cwd: "/repo",
+          },
+          {
+            sessionId: "s2",
+            summary: "Fixed the tests",
+            lastModified: 1_788_000_000,
+            cwd: "/other",
+          },
+        ] as never,
+    );
+    const listed = await editor.request(methods.agent.session.list, { cwd: "/repo" });
+    expect(listed.sessions).toEqual([
+      {
+        sessionId: "s1",
+        cwd: "/repo",
+        title: "Parser work",
+        updatedAt: new Date(1_789_000_000_000).toISOString(),
+      },
+      {
+        sessionId: "s2",
+        cwd: "/other",
+        title: "Fixed the tests",
+        // An older CLI counts seconds, and it still lands on the right day.
+        updatedAt: new Date(1_788_000_000_000).toISOString(),
+      },
+    ]);
+    expect(listed.nextCursor).toBeUndefined();
+  });
+
+  it("gives a cursor when more is waiting, and takes it back", async () => {
+    const asked: { offset?: number }[] = [];
+    const { editor } = await connect(
+      fakeQuery(hello),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async (options) => {
+        asked.push(options);
+        return saved(options.offset === 0 ? 51 : 2, options.offset);
+      },
+    );
+    const first = await editor.request(methods.agent.session.list, {});
+    expect(first.sessions).toHaveLength(50);
+    expect(first.nextCursor).toBe("50");
+
+    const second = await editor.request(methods.agent.session.list, { cursor: first.nextCursor });
+    expect(second.sessions).toHaveLength(2);
+    expect(second.nextCursor).toBeUndefined();
+    expect(asked.map((o) => o.offset)).toEqual([0, 50]);
+
+    await expect(editor.request(methods.agent.session.list, { cursor: "later" })).rejects.toThrow(
+      /not a cursor/,
+    );
   });
 });
 
