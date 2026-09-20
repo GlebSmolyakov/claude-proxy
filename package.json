@@ -2,7 +2,7 @@
   "name": "claude-proxy",
   "version": "0.1.0",
   "private": true,
-  "description": "OpenAI and Anthropic HTTP APIs in front of the Claude Code agent, through the Claude Agent SDK",
+  "description": "An ACP agent that runs Claude Code inside an editor, through the Claude Agent SDK",
   "type": "module",
   "packageManager": "pnpm@11.17.0",
   "bin": {

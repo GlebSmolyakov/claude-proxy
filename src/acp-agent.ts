@@ -164,6 +164,14 @@ export class ClaudeProxyAgent {
   initialize(params: InitializeRequest): InitializeResponse {
     this.capabilities = params.clientCapabilities;
     this.forms = params.clientCapabilities?.elicitation?.form != null;
+    const has = (value: unknown) =>
+      value === true || (value != null && value !== false) ? "yes" : "no";
+    const fs = params.clientCapabilities?.fs;
+    log.info(
+      `Editor ${params.clientInfo?.name ?? "unknown"}: reads files ${has(fs?.readTextFile)}, writes files ${has(fs?.writeTextFile)}, ` +
+        `terminal ${has(params.clientCapabilities?.terminal)}, forms ${has(params.clientCapabilities?.elicitation?.form)}, ` +
+        `terminal sign-in ${has(params.clientCapabilities?.auth?.terminal)}`,
+    );
     return {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
