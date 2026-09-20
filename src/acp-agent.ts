@@ -32,6 +32,7 @@ import {
 import type {
   CanUseTool,
   McpServerConfig,
+  PermissionResult,
   SDKMessage,
   SessionMessage,
   PermissionMode,
@@ -46,8 +47,9 @@ import { type Editor, editorFiles, insideWorkspace, READ_TOOL } from "./files.js
 import { log } from "./log.js";
 import { availableModes, CANCELLED, decide, isMode, permissionOptions } from "./permissions.js";
 import { promptContent } from "./prompt.js";
+import { answersFrom, questionForm, questionsOf } from "./questions.js";
 import { type LiveQuery, type RunningPrompt, Session } from "./session.js";
-import { toolInfo } from "./tools.js";
+import { type Input, toolInfo } from "./tools.js";
 import { UpdateMapper } from "./updates.js";
 
 /** After an interrupt, how long a prompt may take to wind down before its process is stopped. */
@@ -106,6 +108,8 @@ export class ClaudeProxyAgent {
   private readonly sessions = new Map<string, Session>();
   /** What the editor said it can do, from `initialize`. */
   private capabilities: ClientCapabilities | undefined;
+  /** The editor can show a form, so the agent may ask its questions. */
+  private forms = false;
 
   constructor(
     private readonly editor: Editor,
@@ -114,6 +118,7 @@ export class ClaudeProxyAgent {
 
   initialize(params: InitializeRequest): InitializeResponse {
     this.capabilities = params.clientCapabilities;
+    this.forms = params.clientCapabilities?.elicitation?.form != null;
     return {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
@@ -304,6 +309,7 @@ export class ClaudeProxyAgent {
         executable: this.options.executable,
         canUseTool: this.canUseTool(session),
         files,
+        questions: this.forms,
         stderr,
       }),
     });
@@ -403,6 +409,11 @@ export class ClaudeProxyAgent {
       if (session.running?.cancelled) {
         return CANCELLED;
       }
+      // A question is not an action to approve: the editor shows it as a
+      // form and the answers go back as the tool's own input.
+      if (toolName === "AskUserQuestion" && this.forms) {
+        return this.askQuestions(session, input, toolUseID, signal);
+      }
       // Reading inside the session's folders is what the built-in Read does
       // without asking; the redirect must not turn it into a dialog.
       if (
@@ -446,6 +457,36 @@ export class ClaudeProxyAgent {
       }
       return decision.result;
     };
+  }
+
+  /** Put the agent's questions to the user and hand back what they answered. */
+  private async askQuestions(
+    session: Session,
+    input: Input,
+    toolUseID: string,
+    signal: AbortSignal,
+  ): Promise<PermissionResult> {
+    const questions = questionsOf(input);
+    if (!questions) {
+      return { behavior: "deny", message: "AskUserQuestion was called without any question." };
+    }
+    let response;
+    try {
+      response = await this.editor.request(
+        methods.client.elicitation.create,
+        questionForm(questions, session.id, toolUseID),
+        { cancellationSignal: signal },
+      );
+    } catch (e) {
+      log.warn(`[${session.id}] Could not put the question to the user: ${(e as Error).message}`);
+      return CANCELLED;
+    }
+    const answers = answersFrom(response, input, questions);
+    if (!answers.answered) {
+      return { behavior: "deny", message: "The user closed the question without answering." };
+    }
+    log.info(`[${session.id}] Answered ${questions.length} question(s)`);
+    return { behavior: "allow", updatedInput: answers.input };
   }
 
   private async update(session: Session, update: SessionUpdate): Promise<void> {

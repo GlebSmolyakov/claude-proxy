@@ -10,6 +10,7 @@ function build(
   return buildOptions({
     session,
     resume: false,
+    questions: false,
     executable: "/bin/claude",
     canUseTool: async () => ({ behavior: "allow" }),
     stderr: () => {},

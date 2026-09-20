@@ -47,6 +47,8 @@ export interface AgentOptions {
   canUseTool: CanUseTool;
   /** Reading and writing through the editor, when it serves files. */
   files?: FileTools;
+  /** The editor can show the agent's questions as a form. */
+  questions: boolean;
   stderr: (data: string) => void;
 }
 
@@ -70,8 +72,8 @@ export function buildOptions(o: AgentOptions): Options {
     // Lets the editor switch to bypassPermissions later in the session.
     allowDangerouslySkipPermissions: ALLOW_BYPASS,
     canUseTool: o.canUseTool,
-    // Its questions need forms, which this host does not render.
-    disallowedTools: ["AskUserQuestion"],
+    // Asking is only worth it where the editor can show the form.
+    ...(o.questions ? {} : { disallowedTools: ["AskUserQuestion"] }),
     // The ACP session id is the CLI's session id, so the next prompt finds the transcript.
     ...(o.resume ? { resume: s.id } : { sessionId: s.id }),
     pathToClaudeCodeExecutable: o.executable,

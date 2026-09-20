@@ -1,5 +1,7 @@
 import {
   client as acpClient,
+  type CreateElicitationRequest,
+  type CreateElicitationResponse,
   methods,
   PROTOCOL_VERSION,
   type RequestPermissionRequest,
@@ -118,10 +120,16 @@ async function connect(
     writeTextFile: false,
   },
   readSession: HostOptions["readSession"] = async () => [],
+  elicit?: (request: CreateElicitationRequest) => CreateElicitationResponse,
 ) {
   const updates: SessionNotification[] = [];
   const asked: RequestPermissionRequest[] = [];
+  const forms: CreateElicitationRequest[] = [];
   const connection = acpClient({ name: "test-editor" })
+    .onRequest(methods.client.elicitation.create, (ctx) => {
+      forms.push(ctx.params);
+      return elicit ? elicit(ctx.params) : { action: "cancel" };
+    })
     .onNotification(methods.client.session.update, (ctx) => {
       updates.push(ctx.params);
     })
@@ -141,7 +149,7 @@ async function connect(
   const editor = connection.agent;
   await editor.request(methods.agent.initialize, {
     protocolVersion: PROTOCOL_VERSION,
-    clientCapabilities: { fs },
+    clientCapabilities: { fs, ...(elicit && { elicitation: { form: {} } }) },
   });
   const { sessionId } = await editor.request(methods.agent.session.new, {
     cwd: "/repo",
@@ -152,7 +160,7 @@ async function connect(
       sessionId,
       prompt: [{ type: "text", text: t }],
     });
-  return { editor, sessionId, updates, asked, prompt, connection };
+  return { editor, sessionId, updates, asked, forms, prompt, connection };
 }
 
 const kinds = (updates: SessionNotification[]) => updates.map((u) => u.update.sessionUpdate);
@@ -557,6 +565,62 @@ describe("permissions", () => {
       sessionUpdate: "current_mode_update",
       currentModeId: "acceptEdits",
     });
+  });
+});
+
+describe("the agent's questions", () => {
+  const asking = (input: object) =>
+    async function* (options: Options): AsyncGenerator<SDKMessage> {
+      yield init();
+      const decision = await options.canUseTool!("AskUserQuestion", input as never, {
+        signal: new AbortController().signal,
+        toolUseID: "t1",
+        requestId: "q1",
+      });
+      yield messageStart("msg_1");
+      yield text(
+        decision?.behavior === "allow"
+          ? JSON.stringify((decision.updatedInput as { answers: unknown }).answers)
+          : `refused: ${decision?.behavior === "deny" ? decision.message : ""}`,
+      );
+      yield result();
+    };
+  const question = {
+    questions: [
+      {
+        question: "Which colour?",
+        header: "Colour",
+        multiSelect: false,
+        options: [{ label: "Teal", description: "Blue-green" }, { label: "Red" }],
+      },
+    ],
+  };
+
+  it("reach the user as a form, and the answer reaches the tool", async () => {
+    const { prompt, forms, updates, asked } = await connect(
+      fakeQuery(asking(question)),
+      undefined,
+      undefined,
+      undefined,
+      () => ({ action: "accept", content: { question_0: "Teal" } }),
+    );
+    await prompt();
+    expect(forms).toHaveLength(1);
+    expect(forms[0]).toMatchObject({ mode: "form", toolCallId: "t1", message: "Which colour?" });
+    expect(asked).toEqual([]);
+    expect(said(updates)).toMatchObject({ content: { text: '{"Which colour?":"Teal"}' } });
+  });
+
+  it("end the call when the user closes the form", async () => {
+    const { prompt, updates } = await connect(
+      fakeQuery(asking(question)),
+      undefined,
+      undefined,
+      undefined,
+      () => ({ action: "cancel" }),
+    );
+    await prompt();
+    expect(said(updates)?.content).toMatchObject({ text: expect.stringContaining("refused") });
   });
 });
 
