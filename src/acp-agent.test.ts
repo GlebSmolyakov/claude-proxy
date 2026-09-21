@@ -742,6 +742,12 @@ describe("slash commands", () => {
         description: "Undo the file changes since one of your earlier prompts",
         input: { hint: "[number]" },
       },
+      { name: "usage", description: "What the subscription and the context have left" },
+      {
+        name: "mcp",
+        description: "MCP servers of this session, and turning one off or back on",
+        input: { hint: "[on|off|reconnect <server>]" },
+      },
     ]);
   });
 

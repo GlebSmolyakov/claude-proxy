@@ -41,6 +41,11 @@ export type AgentQuery = AsyncIterable<SDKMessage> &
     | "supportedCommands"
     | "accountInfo"
     | "rewindFiles"
+    | "getContextUsage"
+    | "usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET"
+    | "mcpServerStatus"
+    | "toggleMcpServer"
+    | "reconnectMcpServer"
     | "close"
   >;
 

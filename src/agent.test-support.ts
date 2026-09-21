@@ -11,8 +11,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type {
   AccountInfo,
+  McpServerStatus,
   Options,
   RewindFilesResult,
+  SDKControlGetContextUsageResponse,
+  SDKControlGetUsageResponse,
   PermissionMode,
   SDKMessage,
   SDKUserMessage,
@@ -49,6 +52,12 @@ export interface Fake {
   rewinds: string[];
   /** What a rewind answers; a test changes it to try the other endings. */
   rewound: RewindFilesResult;
+  /** What the CLI says about the context and the subscription. */
+  context: SDKControlGetContextUsageResponse;
+  spent: SDKControlGetUsageResponse;
+  /** The MCP servers the CLI runs, and what the host asked to do with them. */
+  mcp: McpServerStatus[];
+  mcpChanges: string[];
   /** What the CLI reports about the account it works under. */
   account: AccountInfo;
   /** Models the editor asked for, through the picker. */
@@ -67,6 +76,25 @@ export function fakeQuery(...scripts: Script[]): Fake {
     used: [],
     rewinds: [],
     rewound: { canRewind: true, filesChanged: ["src/a.ts"], insertions: 2, deletions: 1 },
+    context: {
+      categories: [
+        { name: "Messages", tokens: 40_000, color: "blue", kind: "used" },
+        { name: "Free", tokens: 160_000, color: "grey", kind: "free" },
+      ],
+      totalTokens: 200_000,
+      maxTokens: 200_000,
+      percentage: 20,
+    } as unknown as SDKControlGetContextUsageResponse,
+    spent: {
+      subscription_type: "max",
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 42, resets_at: "2026-09-21T14:20:00.000Z" },
+        seven_day: { utilization: 12, resets_at: null },
+      },
+    } as unknown as SDKControlGetUsageResponse,
+    mcp: [{ name: "db", status: "connected", serverInfo: { name: "db-mcp", version: "1.0" } }],
+    mcpChanges: [],
     starts: [],
     prompts: [],
     interrupts: 0,
@@ -110,6 +138,15 @@ export function fakeQuery(...scripts: Script[]): Fake {
       rewindFiles: async (userMessageId: string) => {
         fake.rewinds.push(userMessageId);
         return fake.rewound;
+      },
+      getContextUsage: async () => fake.context,
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => fake.spent,
+      mcpServerStatus: async () => fake.mcp,
+      toggleMcpServer: async (name: string, enabled: boolean) => {
+        fake.mcpChanges.push(`${enabled ? "on" : "off"} ${name}`);
+      },
+      reconnectMcpServer: async (name: string) => {
+        fake.mcpChanges.push(`reconnect ${name}`);
       },
       supportedCommands: async () => [
         { name: "compact", description: "Compact the conversation", argumentHint: "" },

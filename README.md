@@ -92,6 +92,8 @@ The model list starts as the aliases and is replaced by what the account really 
 A few commands are answered here instead of by the model. They stand in the same list as the CLI's, and a prompt that is one of them never reaches the agent.
 
 - **`/rewind`** puts the files back as they were before one of your earlier prompts. The CLI keeps a backup before every edit; this asks which prompt to return to — a form when the editor can show one, `/rewind 2` when it cannot — and says which files changed back.
+- **`/usage`** says where the subscription windows and the context stand right now, rather than waiting for a limit to move.
+- **`/mcp`** lists the MCP servers of the session: the CLI's own with their connection status, and the ones this host carries over itself. `/mcp off db`, `/mcp on db` and `/mcp reconnect db` pass an order to the CLI about one of its own.
 
 ### The line between the editor and the CLI
 

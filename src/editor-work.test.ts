@@ -262,6 +262,43 @@ describe("a long conversation", () => {
   });
 });
 
+describe("asking the host where things stand", () => {
+  const idle = turn(says("Working."));
+
+  it("says what the subscription and the context have left", async () => {
+    const agent = fakeQuery(idle, idle);
+    const editor = openEditor(agent);
+    await editor.start();
+    await editor.open("/repo");
+    await editor.prompt("do something");
+    await editor.prompt("/usage");
+
+    // The command answered; the model was never asked a second time.
+    expect(agent.prompts).toHaveLength(1);
+    expect(editor.said()).toContain("max plan: five-hour 42%");
+    expect(editor.said()).toContain("weekly 12%");
+    expect(editor.said()).toContain("Context: 20% of 200,000 tokens");
+  });
+
+  it("lists the MCP servers and passes on an order about one", async () => {
+    const agent = fakeQuery(idle);
+    const editor = openEditor(agent);
+    await editor.start();
+    await editor.open("/repo");
+
+    await editor.prompt("/mcp");
+    expect(editor.said()).toContain("db: connected (db-mcp 1.0)");
+
+    await editor.prompt("/mcp off db");
+    expect(agent.mcpChanges).toEqual(["off db"]);
+    await editor.prompt("/mcp reconnect db");
+    expect(agent.mcpChanges).toEqual(["off db", "reconnect db"]);
+
+    await editor.prompt("/mcp sideways db");
+    expect(editor.said()).toContain("Say `/mcp`");
+  });
+});
+
 describe("undoing what the agent did", () => {
   const edited = turn(
     says("Editing."),
