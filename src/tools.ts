@@ -42,6 +42,12 @@ const textContent = (text: string): ToolCallContent => ({
   content: { type: "text", text },
 });
 
+/** One line of at most `limit` characters, for a title or a list. */
+export function shorten(text: string, limit = 60): string {
+  const one = text.replace(/\s+/g, " ").trim();
+  return one.length > limit ? `${one.slice(0, limit - 1)}…` : one;
+}
+
 /** A path inside the working directory is shown relative to it. */
 export function displayPath(path: string, cwd: string): string {
   const root = resolve(cwd);

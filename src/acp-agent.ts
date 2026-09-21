@@ -68,7 +68,7 @@ import { type Connect, proxyTools, type Wishes } from "./proxy.js";
 import { promptContent } from "./prompt.js";
 import { answersFrom, mcpForm, mcpResult, questionForm, questionsOf } from "./questions.js";
 import { type LiveQuery, type Prompt, type RunningPrompt, Session } from "./session.js";
-import { type Input, toolInfo } from "./tools.js";
+import { type Input, shorten, toolInfo } from "./tools.js";
 import { UpdateMapper } from "./updates.js";
 
 /** After an interrupt, how long a prompt may take to wind down before its process is stopped. */
@@ -171,6 +171,8 @@ export class ClaudeProxyAgent {
   private capabilities: ClientCapabilities | undefined;
   /** The editor can show a form, so the agent may ask its questions. */
   private forms = false;
+  /** The editor keeps a place in the timeline for compaction. */
+  private compaction = false;
 
   private readonly sweep: NodeJS.Timeout;
 
@@ -188,6 +190,7 @@ export class ClaudeProxyAgent {
   initialize(params: InitializeRequest): InitializeResponse {
     this.capabilities = params.clientCapabilities;
     this.forms = params.clientCapabilities?.elicitation?.form != null;
+    this.compaction = params.clientCapabilities?.session?.compaction != null;
     const has = (value: unknown) =>
       value === true || (value != null && value !== false) ? "yes" : "no";
     const fs = params.clientCapabilities?.fs;
@@ -364,6 +367,15 @@ export class ClaudeProxyAgent {
       at: Date.now(),
     };
     session.prompts.push(asked);
+    if (session.prompts.length === 1 && asked.text.trim() !== "") {
+      // A live session is nameless in the editor's list until it is told one,
+      // and what the user first asked for is what they will recognise.
+      await this.update(session, {
+        sessionUpdate: "session_info_update",
+        title: shorten(asked.text, 80),
+        updatedAt: new Date(asked.at).toISOString(),
+      });
+    }
     const onAbort = () => void this.cancel({ sessionId: session.id });
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
@@ -601,7 +613,7 @@ export class ClaudeProxyAgent {
     session.lastUsedAt = Date.now();
     live.input.push(userMessage(content, asked.uuid));
 
-    const mapper = new UpdateMapper(session);
+    const mapper = new UpdateMapper(session, { compaction: this.compaction });
     const run: Run = { died: false, cancelled: false, loggedOut: false, stderr: "" };
     try {
       for (;;) {

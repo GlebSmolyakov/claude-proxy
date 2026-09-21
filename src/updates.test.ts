@@ -325,6 +325,24 @@ describe("UpdateMapper", () => {
     expect(m.map(assistant("msg_2", "Also empty."))[0]).toMatchObject({ messageId: "msg_2" });
   });
 
+  it("marks where the conversation was compacted, for an editor that keeps room for it", () => {
+    const boundary = {
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "auto", pre_tokens: 150_000, post_tokens: 20_000 },
+    } as unknown as Parameters<UpdateMapper["map"]>[0];
+
+    expect(new UpdateMapper(session(), { compaction: true }).map(boundary)).toEqual([
+      { sessionUpdate: "compaction_update", compactionId: expect.any(String), status: "completed" },
+      { sessionUpdate: "usage_update", used: 20_000, size: 200_000 },
+    ]);
+    // Compaction is an extension; an editor that did not ask hears only how
+    // much smaller the context became.
+    expect(new UpdateMapper(session()).map(boundary)).toEqual([
+      { sessionUpdate: "usage_update", used: 20_000, size: 200_000 },
+    ]);
+  });
+
   it("stays quiet about usage when no API call happened", () => {
     expect(new UpdateMapper(session()).map(result())).toEqual([]);
   });

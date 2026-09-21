@@ -237,6 +237,31 @@ const offered = (request: CreateElicitationRequest) =>
     }
   ).requestedSchema.properties.choice.oneOf;
 
+describe("a long conversation", () => {
+  it("shows the compaction to an editor that keeps room for it", async () => {
+    const compacted: Script = async function* () {
+      yield init();
+      yield {
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "auto", pre_tokens: 150_000, post_tokens: 20_000 },
+      } as unknown as SDKMessage;
+      yield messageStart("msg_1");
+      yield text("Carrying on where we left off.");
+      yield result();
+    };
+    const editor = openEditor(fakeQuery(compacted), {
+      capabilities: { session: { compaction: {} } },
+    });
+    await editor.start();
+    await editor.open("/repo");
+    await editor.prompt("keep going");
+
+    expect(editor.kinds()).toContain("compaction_update");
+    expect(editor.said()).toBe("Carrying on where we left off.");
+  });
+});
+
 describe("undoing what the agent did", () => {
   const edited = turn(
     says("Editing."),

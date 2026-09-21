@@ -64,9 +64,10 @@ Every message from the SDK becomes a `session/update`:
 | its input and its result | title, the diff of an edit, output, status     |
 | `TodoWrite` and tasks    | the plan as a list                             |
 | token counts             | what the context holds and what the turn cost  |
+| a compacted conversation | a mark in the timeline where it was shortened  |
 | subscription spend       | a word when a limit window crosses a threshold |
 
-A card opens as soon as the tool is named and is refined when its full input arrives: first "Edit", then "Edit src/a.ts" with the diff.
+A card opens as soon as the tool is named and is refined when its full input arrives: first "Edit", then "Edit src/a.ts" with the diff. The session is named after the first thing asked of it, so it is not nameless in the editor's list while it is the one you are working in. The compaction mark is an extension, and goes only to an editor that asked for it.
 
 ### What the editor gives back
 

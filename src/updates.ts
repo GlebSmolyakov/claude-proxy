@@ -43,12 +43,19 @@ export class UpdateMapper {
   private context: number | undefined;
   /** Messages whose text arrived as deltas, so it is not sent twice. */
   private readonly streamed = new Set<string>();
+  /**
+   * The editor keeps a place in its timeline for compaction. It is an
+   * extension, so nothing about it is sent to a client that did not ask.
+   */
+  private readonly compaction: boolean;
+  private compactions = 0;
 
   constructor(
     private readonly session: Session,
-    options: { replay?: boolean } = {},
+    options: { replay?: boolean; compaction?: boolean } = {},
   ) {
     this.replay = options.replay === true;
+    this.compaction = options.compaction === true;
   }
 
   map(message: SDKMessage): SessionUpdate[] {
@@ -57,7 +64,10 @@ export class UpdateMapper {
         // Compaction leaves a smaller context behind; say so without waiting
         // for the next API call to report it.
         if (message.subtype === "compact_boundary") {
-          return this.used(message.compact_metadata.post_tokens);
+          return [
+            ...this.compacted(message.compact_metadata),
+            ...this.used(message.compact_metadata.post_tokens),
+          ];
         }
         // What a slash command printed is the answer to it.
         if (message.subtype === "local_command_output" && message.content !== "") {
@@ -77,6 +87,27 @@ export class UpdateMapper {
       default:
         return [];
     }
+  }
+
+  /**
+   * The conversation was compacted: older messages are gone and a summary
+   * stands in their place. The editor is told where that happened, so the
+   * turns before it are not read as one unbroken thread.
+   */
+  private compacted(about: { trigger: string; pre_tokens: number }): SessionUpdate[] {
+    log.info(
+      `[${this.session.id}] Compacted the conversation (${about.trigger}, was ${about.pre_tokens} tokens)`,
+    );
+    if (!this.compaction) {
+      return [];
+    }
+    return [
+      {
+        sessionUpdate: "compaction_update",
+        compactionId: `${this.session.id}-compaction-${++this.compactions}`,
+        status: "completed",
+      },
+    ];
   }
 
   /** What the subscription has spent, when a window crosses a threshold. */

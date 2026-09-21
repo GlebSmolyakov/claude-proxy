@@ -9,6 +9,7 @@ import type { ContentBlock } from "@agentclientprotocol/sdk";
 
 import type { AgentQuery } from "./agent.js";
 import type { Session } from "./session.js";
+import { shorten } from "./tools.js";
 
 /** One choice offered to the user when a command needs them to pick. */
 export interface Choice {
@@ -117,9 +118,4 @@ async function rewind({ session, args, agent, choose }: CommandContext): Promise
     `Put ${counted} back as they were before "${shorten(chosen.text)}" (${lines}).${skipped}`,
     ...files.map((file) => `- ${file}`),
   ].join("\n");
-}
-
-function shorten(text: string, limit = 60): string {
-  const one = text.replace(/\s+/g, " ").trim();
-  return one.length > limit ? `${one.slice(0, limit - 1)}…` : one;
 }

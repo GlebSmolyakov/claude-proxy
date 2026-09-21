@@ -402,6 +402,8 @@ describe("session/prompt", () => {
       },
     });
     expect(kinds(updates)).toEqual([
+      // The first prompt is also what the session is named after.
+      "session_info_update",
       // The agent's first init also brings the account's models and commands.
       "config_option_update",
       "available_commands_update",
@@ -702,6 +704,26 @@ describe("the model picker", () => {
         value: "teal",
       }),
     ).rejects.toThrow(/unknown option/);
+  });
+});
+
+describe("what the editor's session list shows", () => {
+  it("names a session after the first thing asked of it, once", async () => {
+    const fake = fakeQuery(hello, hello);
+    const { editor, sessionId, updates } = await connect(fake);
+    await editor.request(methods.agent.session.prompt, {
+      sessionId,
+      prompt: [{ type: "text", text: "  add a health check to the server  " }],
+    });
+    await editor.request(methods.agent.session.prompt, {
+      sessionId,
+      prompt: [{ type: "text", text: "now write a test for it" }],
+    });
+    const named = updates
+      .map((u) => u.update)
+      .filter((u) => u.sessionUpdate === "session_info_update");
+    expect(named).toHaveLength(1);
+    expect(named[0]).toMatchObject({ title: "add a health check to the server" });
   });
 });
 
