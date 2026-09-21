@@ -8,10 +8,11 @@ import { join } from "node:path";
 
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 
+import type { Allowed } from "./acp-agent.js";
 import { log } from "./log.js";
 import { resolveModel } from "./models.js";
-import { isMode } from "./permissions.js";
-import { parseWishes, type Wishes } from "./proxy.js";
+import { freerThan, isMode } from "./permissions.js";
+import { parseWishes, type Wanted, type Wishes } from "./proxy.js";
 
 export const PROJECT_FILE = ".claude-proxy.json";
 
@@ -19,7 +20,7 @@ export interface ProjectSettings {
   model?: string;
   permissionMode?: PermissionMode;
   /** Names of the editor's MCP servers, or "all". */
-  allowMcp?: "all" | string[];
+  allowMcp?: Allowed;
   /** Servers whose tools this host carries over itself, as `{ "Air": ["browser-read-page"] }`. */
   proxyMcp?: Wishes;
 }
@@ -107,4 +108,83 @@ export function projectSettings(cwd: string): ProjectSettings {
     log.info(`${PROJECT_FILE} in ${cwd}: ${named.join(", ")}`);
   }
   return settings;
+}
+
+/** What the operator allowed on the command line, as a ceiling for a project. */
+export interface Limits {
+  permissionMode: PermissionMode;
+  allowMcp: Allowed;
+  proxyMcp: Wishes;
+}
+
+/**
+ * The project's settings, kept within the flags.
+ *
+ * `.claude-proxy.json` comes with the code, and code can be someone else's:
+ * cloning a repository must not be enough to hand its agent a freer mode or
+ * a server the operator never allowed. So a project may ask for less than
+ * the host was started with, and never for more.
+ */
+export function narrowTo(settings: ProjectSettings, limits: Limits): ProjectSettings {
+  const narrowed: ProjectSettings = { model: settings.model };
+  const refuse = (field: string, why: string) =>
+    log.warn(`Ignoring ${field} in ${PROJECT_FILE}: ${why}`);
+
+  if (settings.permissionMode !== undefined) {
+    if (freerThan(settings.permissionMode, limits.permissionMode)) {
+      refuse(
+        "permissionMode",
+        `'${settings.permissionMode}' is freer than '${limits.permissionMode}', which this host was started with`,
+      );
+    } else {
+      narrowed.permissionMode = settings.permissionMode;
+    }
+  }
+
+  if (settings.allowMcp !== undefined) {
+    narrowed.allowMcp = narrowAllowed(settings.allowMcp, limits.allowMcp);
+  }
+
+  if (settings.proxyMcp !== undefined) {
+    narrowed.proxyMcp = narrowWishes(settings.proxyMcp, limits.proxyMcp, refuse);
+  }
+  return narrowed;
+}
+
+/** The servers a project asks for, minus the ones the flags never allowed. */
+function narrowAllowed(asked: Allowed, limit: Allowed): Allowed {
+  if (limit === "all") {
+    return asked;
+  }
+  if (asked === "all") {
+    return limit;
+  }
+  return asked.filter((name) => limit.includes(name));
+}
+
+/** The same for proxying, down to which tools of a server were allowed. */
+function narrowWishes(
+  asked: Wishes,
+  limit: Wishes,
+  refuse: (field: string, why: string) => void,
+): Wishes {
+  const wishes: Wishes = {};
+  for (const [server, wanted] of Object.entries(asked)) {
+    const allowed: Wanted | undefined = limit[server];
+    if (allowed === undefined) {
+      refuse(`proxyMcp.${server}`, "--proxy-mcp does not carry that server over");
+      continue;
+    }
+    if (allowed === "all" || wanted === "all") {
+      wishes[server] = allowed === "all" ? wanted : allowed;
+      continue;
+    }
+    const kept = wanted.filter((name) => allowed.includes(name));
+    if (kept.length === 0) {
+      refuse(`proxyMcp.${server}`, "--proxy-mcp carries none of the tools it asks for");
+      continue;
+    }
+    wishes[server] = kept;
+  }
+  return wishes;
 }

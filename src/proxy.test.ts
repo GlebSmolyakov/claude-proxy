@@ -126,6 +126,39 @@ describe("proxyTools", () => {
     expect(failed.tools).toEqual([]);
   });
 
+  it("still lets go of a server that connected and then would not list its tools", async () => {
+    const closed = vi.fn();
+    const client: UpstreamClient = {
+      listTools: async () => {
+        throw new Error("no answer");
+      },
+      callTool: async () => ({}),
+      close: async () => closed(),
+    };
+    const proxied = await proxyTools(AIR, { Air: "all" }, async () => client);
+    expect(proxied.tools).toEqual([]);
+    await proxied.close();
+    // Its process is already running, so forgetting the client would leave it behind.
+    expect(closed).toHaveBeenCalledOnce();
+  });
+
+  it("numbers a tool whose name another server already took", async () => {
+    // `Air.1` cannot keep its dot in a tool name, which makes it the other one.
+    const servers: Record<string, McpServerConfig> = {
+      "Air.1": { type: "stdio", command: "one" },
+      Air_1: { type: "stdio", command: "two" },
+    };
+    const proxied = await proxyTools(
+      servers,
+      { "Air.1": "all", Air_1: "all" },
+      upstream([CLICK]).connect,
+    );
+    expect(proxied.tools.map((t) => t.name)).toEqual([
+      "Air_1__browser-click",
+      "Air_1__browser-click_2",
+    ]);
+  });
+
   it("lets go of every server it opened", async () => {
     const { connect, closed } = upstream([SEARCH]);
     const proxied = await proxyTools(AIR, { Air: "all" }, connect);

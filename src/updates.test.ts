@@ -277,6 +277,25 @@ describe("UpdateMapper", () => {
     expect(m.map(limit(0.9))).toEqual([]);
   });
 
+  it("leaves a message being streamed alone when the subscription speaks", () => {
+    const m = new UpdateMapper(session());
+    m.map(messageStart("msg_1"));
+    m.map({
+      type: "rate_limit_event",
+      rate_limit_info: { status: "allowed", unifiedWindows: { five_hour: { utilization: 0.85 } } },
+    } as unknown as Parameters<UpdateMapper["map"]>[0]);
+
+    const [chunk] = m.map(text("Hello"));
+    expect(chunk).toMatchObject({ messageId: "msg_1" });
+    // The streamed text is not said a second time when the whole message arrives.
+    const complete = {
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: { id: "msg_1", content: [{ type: "text", text: "Hello" }] },
+    } as unknown as Parameters<UpdateMapper["map"]>[0];
+    expect(m.map(complete)).toEqual([]);
+  });
+
   it("stays quiet about usage when no API call happened", () => {
     expect(new UpdateMapper(session()).map(result())).toEqual([]);
   });

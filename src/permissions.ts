@@ -38,6 +38,23 @@ export function isMode(id: string): id is PermissionMode {
   return availableModes().some((m) => m.id === id);
 }
 
+/**
+ * The modes ordered by how much happens without a human: planning changes
+ * nothing, `dontAsk` does only what was allowed in advance, `default` can
+ * ask for the rest, and the last two stop asking about edits and about
+ * everything.
+ */
+const FREEDOM: string[] = ["plan", "dontAsk", "default", "acceptEdits", "bypassPermissions"];
+
+/** Is `mode` freer than `limit`? An unknown mode counts as the freest. */
+export function freerThan(mode: PermissionMode, limit: PermissionMode): boolean {
+  const rank = (m: string) => {
+    const i = FREEDOM.indexOf(m);
+    return i < 0 ? FREEDOM.length : i;
+  };
+  return rank(mode) > rank(limit);
+}
+
 export const OPTION = {
   allow: "allow",
   allowAlways: "allow-always",

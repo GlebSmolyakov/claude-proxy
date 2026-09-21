@@ -29,6 +29,24 @@ describe("quotas", () => {
     expect(quotas(reading({}))).toEqual([]);
   });
 
+  it("mark as used up only the window that ran out, not its neighbours", () => {
+    expect(
+      quotas(
+        reading({
+          status: "rejected",
+          rateLimitType: "five_hour",
+          unifiedWindows: {
+            five_hour: { utilization: 1 },
+            seven_day: { utilization: 0.12 },
+          },
+        }),
+      ),
+    ).toEqual([
+      { window: "five_hour", used: 1, resetsAt: undefined, spent: true },
+      { window: "seven_day", used: 0.12, resetsAt: undefined, spent: false },
+    ]);
+  });
+
   it("know when a window is used up", () => {
     const [quota] = quotas(
       reading({ status: "rejected", rateLimitType: "five_hour", utilization: 1 }),

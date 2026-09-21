@@ -4,6 +4,7 @@ import {
   type CreateElicitationResponse,
   methods,
   PROTOCOL_VERSION,
+  type McpServer,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
@@ -18,6 +19,7 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import { type AgentQuery, type RunQuery } from "./agent.js";
+import type { Connect } from "./proxy.js";
 import { type ClaudeProxyAgent, createApp, type HostOptions, mcpServers } from "./acp-agent.js";
 import { OPTION } from "./permissions.js";
 import {
@@ -626,6 +628,97 @@ describe("closing and idling", () => {
     expect(fake.closes).toBe(0);
     await editor.notify(methods.agent.session.cancel, { sessionId });
     await running;
+  });
+});
+
+describe("servers this host carries over", () => {
+  const AIR: McpServer = { name: "Air", command: "/tmp/mcp-proxy", args: [], env: [] };
+
+  /** A host that proxies Air, counting what it opens and what it lets go. */
+  async function carrying(fake: Fake) {
+    const opened: string[] = [];
+    let closed = 0;
+    let host!: ClaudeProxyAgent;
+    const connectMcp: Connect = async (name) => {
+      opened.push(name);
+      return {
+        listTools: async () => ({ tools: [{ name: "browser-click" }] }),
+        callTool: async () => ({}),
+        close: async () => {
+          closed++;
+        },
+      };
+    };
+    const options: HostOptions = {
+      executable: "/bin/claude",
+      permissionMode: "default",
+      runQuery: fake.runQuery,
+      readSession: async () => [],
+      listSessions: async () => [],
+      idleMs: 30 * 60_000,
+      allowMcp: [],
+      proxyMcp: { Air: "all" },
+      connectMcp,
+      version: "0.0.0-test",
+    };
+    const connection = acpClient({ name: "test-editor" }).connect(
+      createApp(options, (h) => (host = h)),
+    );
+    const editor = connection.agent;
+    await editor.request(methods.agent.initialize, {
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: {},
+    });
+    const { sessionId } = await editor.request(methods.agent.session.new, {
+      cwd: "/repo",
+      mcpServers: [AIR],
+    });
+    const prompt = () =>
+      editor.request(methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "go" }],
+      });
+    return { editor, sessionId, prompt, opened, closed: () => closed, host: () => host };
+  }
+
+  it("waits for a prompt to connect, so a slow server cannot hold up a new session", async () => {
+    const { prompt, opened } = await carrying(fakeQuery(hello));
+    expect(opened).toEqual([]);
+    await prompt();
+    expect(opened).toEqual(["Air"]);
+  });
+
+  it("offers their tools to the agent as its own, and nothing of the editor itself", async () => {
+    const fake = fakeQuery(hello);
+    const { prompt } = await carrying(fake);
+    await prompt();
+    // This editor declared no file capabilities, so the host's own server
+    // exists for one reason: the tool it carried over from Air.
+    expect(Object.keys(fake.starts[0].mcpServers ?? {})).toEqual(["acp"]);
+  });
+
+  it("lets them go with the agent that idled out, and reaches for them again", async () => {
+    const fake = fakeQuery(hello, hello);
+    const { prompt, opened, closed, host } = await carrying(fake);
+    await prompt();
+
+    host().closeIdle(Date.now() + 31 * 60_000);
+    await waitFor(() => closed() === 1);
+
+    await prompt();
+    expect(opened).toEqual(["Air", "Air"]);
+  });
+
+  it("lets them go when the editor closes the session or goes away", async () => {
+    const first = await carrying(fakeQuery(hello));
+    await first.prompt();
+    await first.editor.request(methods.agent.session.close, { sessionId: first.sessionId });
+    expect(first.closed()).toBe(1);
+
+    const second = await carrying(fakeQuery(hello));
+    await second.prompt();
+    await second.host().closeAll();
+    expect(second.closed()).toBe(1);
   });
 });
 

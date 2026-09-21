@@ -55,9 +55,13 @@ export function toolInfo(rawName: string, input: Input, cwd: string): ToolInfo {
   const name = REDIRECTED[rawName] ?? rawName;
   // A tool this host carries over from a server of the editor keeps that
   // server's name in front: `mcp__acp__Air__browser-click` → `Air: browser-click`.
-  const carried = name.startsWith("mcp__acp__") ? name.slice("mcp__acp__".length).split("__") : [];
-  if (carried.length === 2) {
-    return { title: `${carried[0]}: ${carried[1]}`, kind: "other", content: [], locations: [] };
+  const carried = name.startsWith("mcp__acp__") ? name.slice("mcp__acp__".length) : "";
+  // The server comes first, so the first `__` is the seam; what follows is
+  // the tool's own name, `__` and all.
+  const seam = carried.indexOf("__");
+  if (seam > 0) {
+    const title = `${carried.slice(0, seam)}: ${carried.slice(seam + 2)}`;
+    return { title, kind: "other", content: [], locations: [] };
   }
   const card = (
     title: string,

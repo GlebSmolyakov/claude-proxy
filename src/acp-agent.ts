@@ -62,7 +62,7 @@ import {
 import { type Editor, editorTools, insideWorkspace, READ_TOOL } from "./editor-tools.js";
 import { log } from "./log.js";
 import { availableModes, CANCELLED, decide, isMode, permissionOptions } from "./permissions.js";
-import { projectSettings } from "./project.js";
+import { narrowTo, type ProjectSettings, projectSettings } from "./project.js";
 import { type Connect, proxyTools, type Wishes } from "./proxy.js";
 import { promptContent } from "./prompt.js";
 import { answersFrom, mcpForm, mcpResult, questionForm, questionsOf } from "./questions.js";
@@ -224,7 +224,7 @@ export class ClaudeProxyAgent {
     if (!isAbsolute(params.cwd)) {
       throw RequestError.invalidParams(undefined, "cwd must be an absolute path");
     }
-    const project = projectSettings(params.cwd);
+    const project = this.settingsFor(params.cwd);
     const session = new Session(
       randomUUID(),
       params.cwd,
@@ -235,7 +235,7 @@ export class ClaudeProxyAgent {
     );
     this.sessions.set(session.id, session);
     log.info(`[${session.id}] New session in ${session.cwd}, mode ${session.mode}`);
-    await this.proxy(session, params.mcpServers, project.proxyMcp);
+    this.willProxy(session, params.mcpServers, project.proxyMcp);
     const broad = [session.cwd, ...session.additionalDirectories].filter(
       (root) => !session.readable.includes(root),
     );
@@ -305,7 +305,7 @@ export class ClaudeProxyAgent {
     if (messages.length === 0) {
       throw RequestError.resourceNotFound(params.sessionId);
     }
-    const project = projectSettings(params.cwd);
+    const project = this.settingsFor(params.cwd);
     const session = new Session(
       params.sessionId,
       params.cwd,
@@ -316,8 +316,13 @@ export class ClaudeProxyAgent {
     );
     // The CLI holds the conversation; the next prompt resumes it.
     session.started = true;
+    const open = this.sessions.get(params.sessionId);
+    if (open) {
+      log.info(`[${session.id}] Loaded over a session already open; letting the old agent go`);
+      await this.retire(open);
+    }
     this.sessions.set(session.id, session);
-    await this.proxy(session, params.mcpServers, project.proxyMcp);
+    this.willProxy(session, params.mcpServers, project.proxyMcp);
     log.info(`[${session.id}] Loading ${messages.length} saved messages`);
 
     const mapper = new UpdateMapper(session, { replay: true });
@@ -393,7 +398,13 @@ export class ClaudeProxyAgent {
 
   /** The editor is done with this session: stop its agent and forget it. */
   async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
-    const session = this.session(params.sessionId);
+    await this.retire(this.session(params.sessionId));
+    log.info(`[${params.sessionId}] Closed`);
+    return {};
+  }
+
+  /** Stop a session's agent, let go of what it held, and forget it. */
+  private async retire(session: Session): Promise<void> {
     const running = session.running;
     if (running) {
       await this.cancel({ sessionId: session.id });
@@ -401,28 +412,51 @@ export class ClaudeProxyAgent {
     }
     session.live?.query.close();
     session.live = undefined;
-    await session.upstream?.close();
-    session.upstream = undefined;
+    session.toProxy = undefined;
+    await this.dropProxy(session);
     await this.releaseTerminals(session);
     this.sessions.delete(session.id);
-    log.info(`[${session.id}] Closed`);
-    return {};
   }
 
   /**
-   * Connect to the servers this session proxies, so their tools become tools
-   * of this host and the editor still never meets the CLI.
+   * What the project asks for, as far as the flags allow it: a repository is
+   * content this host was pointed at, not the one who started it.
    */
-  private async proxy(
-    session: Session,
-    offered: McpServer[],
-    wishes: Wishes | undefined,
-  ): Promise<void> {
+  private settingsFor(cwd: string): ProjectSettings {
+    return narrowTo(projectSettings(cwd), this.options);
+  }
+
+  /** Note which servers this session carries over; `start` is what connects. */
+  private willProxy(session: Session, offered: McpServer[], wishes: Wishes | undefined): void {
     const wanted = wishes ?? this.options.proxyMcp;
     if (Object.keys(wanted).length === 0) {
       return;
     }
-    session.upstream = await proxyTools(serverConfigs(offered), wanted, this.options.connectMcp);
+    session.toProxy = { servers: serverConfigs(offered), wishes: wanted };
+  }
+
+  /**
+   * Connect to the servers this session proxies, so their tools become tools
+   * of this host and the editor still never meets the CLI. Done once per
+   * agent: an agent stopped for idling lets its servers go with it.
+   */
+  private async connectProxy(session: Session): Promise<void> {
+    if (session.upstream || !session.toProxy) {
+      return;
+    }
+    const { servers, wishes } = session.toProxy;
+    session.upstream = await proxyTools(servers, wishes, this.options.connectMcp);
+  }
+
+  /** Let go of the proxied servers, so the processes behind them end too. */
+  private async dropProxy(session: Session): Promise<void> {
+    const upstream = session.upstream;
+    session.upstream = undefined;
+    try {
+      await upstream?.close();
+    } catch (e) {
+      log.warn(`[${session.id}] Could not close a proxied server: ${(e as Error).message}`);
+    }
   }
 
   /** Hand back the terminals the editor opened for a session, including any still running. */
@@ -461,16 +495,22 @@ export class ClaudeProxyAgent {
       log.info(`[${session.id}] Idle for ${since}, stopping its agent`);
       session.live.query.close();
       session.live = undefined;
+      // The next prompt connects to them again.
+      void this.dropProxy(session);
     }
   }
 
-  /** The editor went away: stop every agent. */
-  closeAll(): void {
+  /** The editor went away: stop every agent and every server it reached through. */
+  async closeAll(): Promise<void> {
     clearInterval(this.sweep);
+    const closing: Promise<void>[] = [];
     for (const session of this.sessions.values()) {
       session.live?.query.close();
       session.live = undefined;
+      session.toProxy = undefined;
+      closing.push(this.dropProxy(session));
     }
+    await Promise.all(closing);
   }
 
   private session(id: string): Session {
@@ -486,10 +526,11 @@ export class ClaudeProxyAgent {
    * between prompts, so the conversation, its compaction and its context
    * live in the CLI, not in anything this host rebuilds.
    */
-  private start(session: Session): LiveQuery {
+  private async start(session: Session): Promise<LiveQuery> {
     if (session.live) {
       return session.live;
     }
+    await this.connectProxy(session);
     const stderrTail: string[] = [];
     const stderr = (data: string) => {
       for (const line of data.split("\n").filter((l) => l.trim() !== "")) {
@@ -538,7 +579,7 @@ export class ClaudeProxyAgent {
 
   /** One prompt: hand it to the agent and relay what it says until the turn ends. */
   private async turn(session: Session, content: ContentBlockParam[]): Promise<Run> {
-    const live = this.start(session);
+    const live = await this.start(session);
     let finish!: () => void;
     const running: RunningPrompt = {
       query: live.query,
@@ -878,14 +919,10 @@ function usageOf(result: SDKResultMessage): PromptResponse["usage"] {
 
 /** The editor's MCP servers in the SDK's shape. Servers over ACP itself are not supported. */
 /**
- * The MCP servers an editor asks for, as far as they are allowed.
- *
- * A stdio server is a command the CLI runs, so passing one on is running a
- * program the editor named. Nothing is passed on unless `--allow-mcp` says
- * so, which also keeps the editor and the CLI from meeting each other
- * behind this host's back.
+ * Every server the editor described, in the SDK's shape, with nothing left
+ * out. This is what the host itself may connect to when it proxies; what
+ * the CLI is allowed to run goes through `mcpServers`.
  */
-/** Every server the editor described, in the SDK's shape, with nothing left out. */
 export function serverConfigs(servers: McpServer[]): Record<string, McpServerConfig> {
   const configs: Record<string, McpServerConfig> = {};
   for (const server of servers) {
@@ -905,6 +942,14 @@ export function serverConfigs(servers: McpServer[]): Record<string, McpServerCon
   return configs;
 }
 
+/**
+ * The MCP servers an editor asks for, as far as they are allowed.
+ *
+ * A stdio server is a command the CLI runs, so passing one on is running a
+ * program the editor named. Nothing is passed on unless `--allow-mcp` says
+ * so, which also keeps the editor and the CLI from meeting each other
+ * behind this host's back.
+ */
 export function mcpServers(
   servers: McpServer[],
   allowed: Allowed,

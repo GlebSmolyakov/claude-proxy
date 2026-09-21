@@ -28,18 +28,36 @@ type Report = SDKRateLimitInfo & {
 };
 
 export function quotas(info: Report): Quota[] {
-  const spent = info.status === "rejected";
+  // A refusal names the one window that ran out. Its neighbours are only as
+  // spent as their own reading says, so a five-hour wall does not declare the
+  // weekly limit gone too.
+  const spentIn = (window: string, used: number) =>
+    used >= 1 || (info.status === "rejected" && window === info.rateLimitType);
   if (info.unifiedWindows) {
     return Object.entries(info.unifiedWindows).flatMap(([window, reading]) =>
       reading.utilization === undefined
         ? []
-        : [{ window, used: reading.utilization, resetsAt: reading.resetsAt, spent }],
+        : [
+            {
+              window,
+              used: reading.utilization,
+              resetsAt: reading.resetsAt,
+              spent: spentIn(window, reading.utilization),
+            },
+          ],
     );
   }
   if (info.rateLimitType === undefined || info.utilization === undefined) {
     return [];
   }
-  return [{ window: info.rateLimitType, used: info.utilization, resetsAt: info.resetsAt, spent }];
+  return [
+    {
+      window: info.rateLimitType,
+      used: info.utilization,
+      resetsAt: info.resetsAt,
+      spent: spentIn(info.rateLimitType, info.utilization),
+    },
+  ];
 }
 
 /**

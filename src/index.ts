@@ -23,6 +23,9 @@ import { availableModes, isMode } from "./permissions.js";
 import { parseWishes } from "./proxy.js";
 
 const MODES = availableModes().map((m) => m.id);
+
+/** How long agents and proxied servers have to end before this process does. */
+const SHUTDOWN_GRACE_MS = 2_000;
 const USAGE = `Usage: claude-proxy [--permission-mode MODE] [--model MODEL]
 
 An ACP agent on stdio: an editor starts it and talks to it over stdin and stdout.
@@ -95,6 +98,12 @@ const allowMcp: Allowed =
         .filter(Boolean);
 
 const proxyMcp = parseWishes(values["proxy-mcp"]);
+if (values["proxy-mcp"].trim() === "all") {
+  log.warn(
+    "--proxy-mcp takes the names of servers, so 'all' is read as a server called all; " +
+      "name each server you want carried over, as --proxy-mcp Air",
+  );
+}
 
 let executable: string;
 try {
@@ -139,8 +148,13 @@ log.info(
 
 const shutdown = (reason: string) => {
   log.info(`${reason}, stopping`);
-  host?.closeAll();
-  process.exit(0);
+  if (!host) {
+    process.exit(0);
+  }
+  // Agents and proxied servers are processes of their own; they get a moment
+  // to end before this one does, and no longer than that.
+  void host.closeAll().finally(() => process.exit(0));
+  setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS);
 };
 void connection.closed.then(() => shutdown("The editor closed the connection"));
 process.once("SIGINT", () => shutdown("Received SIGINT"));

@@ -110,18 +110,18 @@ Reading without a dialog works only in the session's folders, and a folder has t
 
 ## Project settings
 
-Flags set the behaviour of the whole process, while the editor opens different projects in it. A `.claude-proxy.json` next to the code overrides the flags for its own folder:
+Flags set the behaviour of the whole process, while the editor opens different projects in it. A `.claude-proxy.json` next to the code narrows the flags for its own folder:
 
 ```json
 {
   "model": "haiku",
-  "permissionMode": "acceptEdits",
+  "permissionMode": "plan",
   "allowMcp": ["Air"],
   "proxyMcp": { "Air": ["browser-read-page"] }
 }
 ```
 
-Whatever the file leaves out comes from the flags. A field the host cannot use is skipped, with a line in the log.
+Whatever the file leaves out comes from the flags, and the file can only ask for less than they allow. A mode freer than the one the host was started with is refused, and so is a server that `--allow-mcp` or `--proxy-mcp` never named: the file arrives with the code, and cloning a repository is not the same as deciding what its agent may do. A field the host cannot use is skipped, with a line in the log.
 
 ## What is not here
 

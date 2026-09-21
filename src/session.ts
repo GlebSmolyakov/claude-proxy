@@ -14,7 +14,7 @@ import type {
 
 import type { AgentQuery, Pushable } from "./agent.js";
 import { narrowRoots } from "./editor-tools.js";
-import type { Upstream } from "./proxy.js";
+import type { Upstream, Wishes } from "./proxy.js";
 import { type Input, TaskPlan, toolInfo } from "./tools.js";
 
 /** Until the first result says otherwise. */
@@ -41,8 +41,14 @@ export interface RunningPrompt {
 export class Session {
   /** The running agent, until it ends or is stopped. */
   live: LiveQuery | undefined;
-  /** Servers of the editor this host proxies for the session. */
+  /** Servers of the editor this host proxies for the session, once connected. */
   upstream: Upstream | undefined;
+  /**
+   * What to connect to when an agent starts. Kept rather than connected at
+   * once: a server that answers slowly would hold up `session/new`, and an
+   * agent stopped for idling lets go of its servers until the next prompt.
+   */
+  toProxy: { servers: Record<string, McpServerConfig>; wishes: Wishes } | undefined;
   /** When the session last had a turn, so idle agents can be stopped. */
   lastUsedAt = Date.now();
   /**

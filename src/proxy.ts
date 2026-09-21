@@ -19,6 +19,9 @@ import { log } from "./log.js";
 /** How long one proxied call may take before the agent is told it failed. */
 const CALL_TIMEOUT_MS = 120_000;
 
+/** How long a server has to answer when the host first reaches for it. */
+const CONNECT_TIMEOUT_MS = 15_000;
+
 /** Which tools of a server to take: every one of them, or these by name. */
 export type Wanted = "all" | readonly string[];
 
@@ -92,6 +95,7 @@ export async function proxyTools(
 ): Promise<Upstream> {
   const tools: SdkMcpToolDefinition[] = [];
   const clients: UpstreamClient[] = [];
+  const taken = new Set<string>();
   for (const [name, wanted] of Object.entries(wishes)) {
     const config = servers[name];
     if (!config) {
@@ -99,21 +103,28 @@ export async function proxyTools(
       continue;
     }
     let client: UpstreamClient;
+    try {
+      client = await withTimeout(connect(name, config), name, CONNECT_TIMEOUT_MS);
+    } catch (e) {
+      log.warn(`Could not reach '${name}': ${(e as Error).message}`);
+      continue;
+    }
+    // Remembered before its tools are read: a stdio server that fails to
+    // answer has still started a process, and `close` is what ends it.
+    clients.push(client);
     let listed: UpstreamTool[];
     try {
-      client = await connect(name, config);
-      listed = (await client.listTools()).tools;
+      listed = (await withTimeout(client.listTools(), name, CONNECT_TIMEOUT_MS)).tools;
     } catch (e) {
       log.warn(`Could not read the tools of '${name}': ${(e as Error).message}`);
       continue;
     }
-    clients.push(client);
-    const taken = listed.filter((upstream) => wanted === "all" || wanted.includes(upstream.name));
-    for (const upstream of taken) {
-      tools.push(proxied(name, upstream, client));
+    const wants = listed.filter((upstream) => wanted === "all" || wanted.includes(upstream.name));
+    for (const upstream of wants) {
+      tools.push(proxied(name, upstream, unique(proxiedName(name, upstream.name), taken), client));
     }
     log.info(
-      `Proxying ${taken.length} of ${listed.length} tools of '${name}': ${taken.map((t) => t.name).join(", ")}`,
+      `Proxying ${wants.length} of ${listed.length} tools of '${name}': ${wants.map((t) => t.name).join(", ")}`,
     );
   }
   return {
@@ -126,9 +137,26 @@ export async function proxyTools(
   };
 }
 
+/**
+ * Sanitising names can bring two of them together, as `Air-1` and `Air_1`
+ * do. The second one to arrive is numbered rather than lost.
+ */
+function unique(name: string, taken: Set<string>): string {
+  let free = name;
+  for (let n = 2; taken.has(free); n++) {
+    free = `${name}_${n}`;
+  }
+  if (free !== name) {
+    log.warn(`Two proxied tools are both called '${name}'; the second is '${free}'`);
+  }
+  taken.add(free);
+  return free;
+}
+
 function proxied(
   server: string,
   upstream: UpstreamTool,
+  name: string,
   client: UpstreamClient,
 ): SdkMcpToolDefinition {
   const description = upstream.description?.trim() || `The ${upstream.name} tool of ${server}.`;
@@ -144,7 +172,7 @@ function proxied(
       };
     }
   };
-  return tool(proxiedName(server, upstream.name), description, shapeOf(upstream), (args) =>
+  return tool(name, description, shapeOf(upstream), (args) =>
     run((args ?? {}) as Record<string, unknown>),
   ) as SdkMcpToolDefinition;
 }
@@ -173,16 +201,13 @@ export function shapeOf(upstream: UpstreamTool): z.ZodRawShape {
   return Object.fromEntries(Object.keys(properties).map((key) => [key, z.unknown()]));
 }
 
-async function withTimeout<T>(call: Promise<T>, name: string): Promise<T> {
+async function withTimeout<T>(call: Promise<T>, name: string, ms = CALL_TIMEOUT_MS): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       call,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`${name} did not answer in ${CALL_TIMEOUT_MS / 1000}s`)),
-          CALL_TIMEOUT_MS,
-        );
+        timer = setTimeout(() => reject(new Error(`${name} did not answer in ${ms / 1000}s`)), ms);
       }),
     ]);
   } finally {

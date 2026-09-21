@@ -97,7 +97,6 @@ export class UpdateMapper {
         // Its own message, so it does not run into what the agent is saying.
         messageId: `quota-${quota.window}-${Math.round(quota.used * 100)}`,
       });
-      this.messageId = undefined;
     }
     return updates;
   }
