@@ -9,16 +9,10 @@ import {
   type RequestPermissionResponse,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
-import type {
-  AccountInfo,
-  Options,
-  PermissionMode,
-  SDKMessage,
-  SDKUserMessage,
-} from "@anthropic-ai/claude-agent-sdk";
+import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "vitest";
 
-import { type AgentQuery, type RunQuery } from "./agent.js";
+import { type Fake, fakeQuery } from "./agent.test-support.js";
 import type { Connect } from "./proxy.js";
 import { type ClaudeProxyAgent, createApp, type HostOptions, mcpServers } from "./acp-agent.js";
 import { OPTION } from "./permissions.js";
@@ -31,93 +25,6 @@ import {
   toolStart,
   toolUse,
 } from "./sdk-messages.test-support.js";
-
-/** A turn, written as the messages the CLI would print and what it would ask. */
-type Script = (
-  options: Options,
-  controls: { interrupted: Promise<void> },
-) => AsyncGenerator<SDKMessage>;
-
-interface Fake {
-  runQuery: RunQuery;
-  /** What the CLI reports about the account it works under. */
-  account: AccountInfo;
-  /** Models the editor asked for, through the picker. */
-  models: string[];
-  /** Options of every query the host started, in order. */
-  starts: Options[];
-  prompts: SDKUserMessage[];
-  interrupts: number;
-  closes: number;
-  modes: PermissionMode[];
-}
-
-function fakeQuery(...scripts: Script[]): Fake {
-  const fake: Fake = {
-    runQuery: () => never(),
-    starts: [],
-    prompts: [],
-    interrupts: 0,
-    closes: 0,
-    modes: [],
-    models: [],
-    account: { email: "user@example.com", apiProvider: "firstParty" },
-  };
-  fake.runQuery = ({ prompt, options }) => {
-    fake.starts.push(options);
-    let interrupt = () => {};
-    // One agent for the session: every prompt pushed into the stream runs the next turn.
-    const messages = (async function* () {
-      for await (const message of prompt) {
-        fake.prompts.push(message);
-        const script = scripts[Math.min(fake.prompts.length - 1, scripts.length - 1)];
-        const interrupted = new Promise<void>((resolve) => (interrupt = resolve));
-        yield* script(options, { interrupted });
-      }
-    })();
-    const query: AgentQuery = {
-      [Symbol.asyncIterator]: () => messages,
-      interrupt: async () => {
-        fake.interrupts += 1;
-        interrupt();
-        return undefined;
-      },
-      setPermissionMode: async (mode) => {
-        fake.modes.push(mode);
-      },
-      setModel: async (model) => {
-        fake.models.push(model ?? "default");
-      },
-      accountInfo: async () => fake.account,
-      supportedCommands: async () => [
-        { name: "compact", description: "Compact the conversation", argumentHint: "" },
-        { name: "review", description: "Review the diff", argumentHint: "[pr]" },
-      ],
-      supportedModels: async () => [
-        {
-          value: "sonnet",
-          resolvedModel: "claude-haiku-4-5-20251001",
-          displayName: "Sonnet 5",
-          description: "Everyday work",
-          supportsEffort: true,
-          supportedEffortLevels: ["low", "high"],
-        },
-        { value: "haiku", displayName: "Haiku 4.5", description: "Fast and cheap" },
-      ],
-      close: () => {
-        fake.closes += 1;
-        interrupt();
-        void messages.return(undefined);
-      },
-    };
-    return query;
-  };
-  return fake;
-}
-
-function never(): never {
-  throw new Error("no script for this query");
-}
 
 /** A saved conversation, in the shape `getSessionMessages` returns. */
 const saved = (messages: object[]) =>

@@ -141,6 +141,13 @@ pnpm run check
 
 The editor runs the built `dist/index.js`, so a change needs a rebuild and a restart of the agent in the editor.
 
+### How the tests work
+
+Most of them are unit tests beside the module they cover. Two layers go wider:
+
+- `editor-work.test.ts` plays a day's work through the protocol. Both ends are real — an ACP editor with buffers, terminals and dialogs on one side, the host's own tool handlers on the other — and only the model's decisions are a script of what the CLI would print. The two halves live in `editor.test-support.ts` (the editor) and `agent.test-support.ts` (the CLI, which asks for permission and runs tools in the order a real one does).
+- `cli.e2e.test.ts` starts the built program as a child process and talks to it over stdin and stdout, so the flags, the stdio wiring and the shutdown are tested as an editor meets them. It rebuilds first when the sources are newer than `dist`.
+
 ```
 src/
 ├── index.ts          arguments, the CLI binary, the ACP app on stdio
