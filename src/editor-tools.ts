@@ -67,6 +67,8 @@ export interface Deps {
 export interface TerminalSupport {
   attach: (toolCallId: string, terminalId: string) => Promise<void>;
   terminals: Set<string>;
+  /** Where the session's commands run from; a `cd` moves it. */
+  shell?: { cwd: string };
 }
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] });

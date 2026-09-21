@@ -8,11 +8,17 @@
 import type { CreateElicitationRequest } from "@agentclientprotocol/sdk";
 import { describe, expect, it, vi } from "vitest";
 
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { type Controls, fakeQuery, type Script } from "./agent.test-support.js";
 import { openEditor, REJECT } from "./editor.test-support.js";
 import { init, messageDelta, messageStart, result, text } from "./sdk-messages.test-support.js";
+
+/** This repository, which is a folder that really has a `src` inside it. */
+const root = () => join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** One thing the agent does in a turn: say a line, or use a tool. */
 type Step = (controls: Controls) => AsyncGenerator<SDKMessage> | SDKMessage[];
@@ -177,6 +183,27 @@ describe("running a command", () => {
     await editor.close();
     expect(editor.terminals[0].released).toBe(true);
     over();
+  });
+});
+
+describe("where commands run", () => {
+  it("remembers a cd, so the next command runs there", async () => {
+    const agent = fakeQuery(
+      turn(
+        uses("Bash", { command: "cd src" }),
+        uses("Bash", { command: "ls" }),
+        uses("Bash", { command: "cd nowhere" }),
+      ),
+    );
+    const editor = openEditor(agent, { commands: { ls: { output: "a.ts\n" } } });
+    await editor.start();
+    await editor.open(root());
+    await editor.prompt("look inside src");
+
+    // The cd opened no terminal of its own; the ls ran in the new folder.
+    expect(editor.terminals).toHaveLength(1);
+    expect(editor.terminals[0]).toMatchObject({ command: "ls", cwd: join(root(), "src") });
+    expect(String(JSON.stringify(agent.used[2].answer))).toContain("no such file or directory");
   });
 });
 

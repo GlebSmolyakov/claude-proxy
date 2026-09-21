@@ -196,8 +196,13 @@ function resultBlocks(content: unknown): ContentBlock[] {
     if (block?.type === "text" && typeof block.text === "string") {
       return [{ type: "text", text: block.text }];
     }
+    // A picture comes either as the API writes it, or as MCP does — which is
+    // how a screenshot from a server this host carries over arrives.
     if (block?.type === "image" && block.source?.type === "base64") {
       return [{ type: "image", data: block.source.data, mimeType: block.source.media_type }];
+    }
+    if (block?.type === "image" && typeof block.data === "string" && block.mimeType) {
+      return [{ type: "image", data: block.data, mimeType: block.mimeType }];
     }
     return [];
   });

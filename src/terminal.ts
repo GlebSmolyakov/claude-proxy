@@ -4,6 +4,10 @@
 // call's card so the user watches the output as it comes, and hands the
 // model what the command printed when it is over.
 
+import { statSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
+
 import { methods } from "@agentclientprotocol/sdk";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
@@ -14,6 +18,8 @@ import { log } from "./log.js";
 export interface TerminalDeps {
   sessionId: string;
   cwd: string;
+  /** Where commands run from now, which a `cd` moves. */
+  shell?: { cwd: string };
   editor: Editor;
   /** Show the terminal on the card of the call that started it. */
   attach: (toolCallId: string, terminalId: string) => Promise<void>;
@@ -52,11 +58,23 @@ export function bashTool(deps: TerminalDeps) {
     async (args, extra) => {
       const call = toolUseId(extra);
       const request = <T>(method: string, params: object) => ask<T>(deps, method, params);
+      const shell = deps.shell ?? { cwd: deps.cwd };
+
+      // A command that only changes directory has nothing to show in a
+      // terminal, and its whole point is what comes after it.
+      const moved = changeDirectory(args.command, shell.cwd);
+      if (moved) {
+        if (moved.error !== undefined) {
+          return { ...text(moved.error), isError: true };
+        }
+        shell.cwd = moved.cwd;
+        return text(`Commands now run in ${moved.cwd}.`);
+      }
 
       const { terminalId } = await request<{ terminalId: string }>(methods.client.terminal.create, {
         command: "bash",
         args: ["-lc", args.command],
-        cwd: deps.cwd,
+        cwd: shell.cwd,
         outputByteLimit: OUTPUT_LIMIT,
       });
       deps.terminals.add(terminalId);
@@ -102,6 +120,39 @@ export function bashTool(deps: TerminalDeps) {
       return text(`${result.output}${truncated}\n[${ending}]`);
     },
   );
+}
+
+/**
+ * Where a lone `cd` would leave the shell, or `undefined` when the command
+ * is something else. Each command runs in its own terminal, so this is the
+ * only way one of them is remembered by the next.
+ */
+export function changeDirectory(
+  command: string,
+  from: string,
+): { cwd: string; error?: string } | undefined {
+  const match = /^cd(?:\s+(.*))?$/.exec(command.trim());
+  if (!match) {
+    return undefined;
+  }
+  const where = (match[1] ?? "").trim().replace(/^(['"])(.*)\1$/, "$2");
+  if (where === "-") {
+    return { cwd: from, error: "This shell keeps no previous directory; say where to go." };
+  }
+  const path =
+    where === "" || where === "~"
+      ? homedir()
+      : where.startsWith("~/")
+        ? resolve(homedir(), where.slice(2))
+        : resolve(from, where);
+  try {
+    if (!statSync(path).isDirectory()) {
+      return { cwd: from, error: `cd: not a directory: ${path}` };
+    }
+  } catch {
+    return { cwd: from, error: `cd: no such file or directory: ${path}` };
+  }
+  return { cwd: path };
 }
 
 function ask<T>(deps: TerminalDeps, method: string, params: object): Promise<T> {

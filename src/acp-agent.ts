@@ -567,6 +567,7 @@ export class ClaudeProxyAgent {
       this.capabilities,
       {
         terminals: session.terminals,
+        shell: session.shell,
         attach: (toolCallId, terminalId) => {
           session.terminalCalls.add(toolCallId);
           return this.update(session, {

@@ -82,6 +82,11 @@ export class Session {
   readonly emitted = new Set<string>();
   /** Terminals the editor opened for this session and has not released. */
   readonly terminals = new Set<string>();
+  /**
+   * Where the next command runs. Each one gets a terminal of its own, so a
+   * `cd` would be forgotten the moment it ended; this remembers it instead.
+   */
+  readonly shell: { cwd: string };
   /** Calls whose card shows a terminal, so their result must not cover it. */
   readonly terminalCalls = new Set<string>();
   readonly plan = new TaskPlan();
@@ -108,6 +113,7 @@ export class Session {
     /** An alias or a full id; the CLI's own default when absent. */
     public model: string | undefined,
   ) {
+    this.shell = { cwd };
     this.displayRoot = resolved(cwd);
     this.readable = narrowRoots(bothForms([cwd, ...additionalDirectories]), homedir());
   }

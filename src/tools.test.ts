@@ -77,6 +77,19 @@ describe("resultContent", () => {
     expect(resultContent("Grep", "", false)).toBeUndefined();
   });
 
+  it("shows a picture as a picture, whichever way the tool wrote it", () => {
+    const api = [
+      { type: "image", source: { type: "base64", data: "iVBOR", media_type: "image/png" } },
+    ];
+    const mcp = [{ type: "image", data: "iVBOR", mimeType: "image/png" }];
+    const shown = [
+      { type: "content", content: { type: "image", data: "iVBOR", mimeType: "image/png" } },
+    ];
+    expect(resultContent("mcp__acp__Air__browser-screenshot", api, false)).toEqual(shown);
+    // A server this host carries over answers the MCP way.
+    expect(resultContent("mcp__acp__Air__browser-screenshot", mcp, false)).toEqual(shown);
+  });
+
   it("fences past backticks inside", () => {
     expect(fence("a ``` b")).toBe("````\na ``` b\n````");
   });

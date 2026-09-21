@@ -10,14 +10,12 @@ most useful first.
 
 ## Smaller tails
 
-- [ ] A proxied screenshot still travels as the upstream server wrote it.
-      Rendering it as a picture on the card is the next step for the proxy.
 - [ ] Air keeps its own MCP server to itself, so the browser tools have not
       been proxied against a live one yet.
 
-- [ ] A redirected `Bash` has no shell that remembers `cd` between calls, and
-      a background command's output cannot be read back: it only goes to the
-      terminal the user watches.
+- [ ] A background command's output cannot be read back: it only goes to the
+      terminal the user watches. ACP terminals have no stdin either, so a
+      command the agent should answer is out of reach as well.
 - [ ] Subagents show only their tool calls. ACP 1.4 has no nested transcript
       to put their text in, so forwarding it would drop it into the main one;
       their calls already carry `_meta.claudeCode.parentToolUseId`.

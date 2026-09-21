@@ -74,7 +74,7 @@ A card opens as soon as the tool is named and is refined when its full input arr
 All of this follows what the editor said about itself in `initialize`.
 
 - **Files.** With `fs/read_text_file` and `fs/write_text_file`, the built-in `Read`, `Write` and `Edit` are redirected to them. The agent sees unsaved changes, and its own edits land in the buffer.
-- **Terminal.** With `terminal/create`, `Bash` runs in a terminal the editor opens, and that terminal stays on the tool call's card while the command runs.
+- **Terminal.** With `terminal/create`, `Bash` runs in a terminal the editor opens, and that terminal stays on the tool call's card while the command runs. Each command gets a terminal of its own, so a lone `cd` is answered here instead: the session remembers where it moved to and the commands after it run there.
 - **Permissions.** Whatever the session mode and your settings leave open goes to a dialog: "Allow", "Always allow" when the CLI suggested a rule, and "Reject". Reading inside the session's folders passes without a dialog, as the built-in `Read` does.
 - **Questions.** With form elicitation, the agent asks through `AskUserQuestion`, and an MCP server's request for input goes the same way. Without it, asking is off.
 - **Sign-in.** With terminal authentication, the sign-in list gets an entry that runs `claude auth login`.
