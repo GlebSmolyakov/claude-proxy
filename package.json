@@ -31,14 +31,15 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
-    "prepare": "tsc",
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "dev": "pnpm run build && pnpm run start",
     "lint": "eslint src",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "pnpm run lint && pnpm run format:check",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
     "test": "vitest run"
   },
   "engines": {
