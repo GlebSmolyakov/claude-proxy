@@ -448,6 +448,24 @@ describe("session/load", () => {
     expect(fake.starts[0].sessionId).toBeUndefined();
   });
 
+  it("introduces the agent to a loaded session too, models and commands and all", async () => {
+    const fake = fakeQuery(hello);
+    const { editor, updates } = await connect(fake, undefined, undefined, async () => transcript);
+    await editor.request(methods.agent.session.load, {
+      sessionId: "saved-1",
+      cwd: "/repo",
+      mcpServers: [],
+    });
+    updates.length = 0;
+    await editor.request(methods.agent.session.prompt, {
+      sessionId: "saved-1",
+      prompt: [{ type: "text", text: "and b.ts?" }],
+    });
+    // Resuming is not a reason for the editor to keep guessing the models.
+    expect(kinds(updates)).toContain("config_option_update");
+    expect(kinds(updates)).toContain("available_commands_update");
+  });
+
   it("refuses a session the CLI does not have", async () => {
     const { editor } = await connect(fakeQuery(hello), undefined, undefined, async () => []);
     await expect(

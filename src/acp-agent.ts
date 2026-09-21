@@ -602,7 +602,8 @@ export class ClaudeProxyAgent {
         const message = next.value;
         if (message.type === "system" && message.subtype === "init") {
           // The CLI announces itself on every turn; the first one is the news.
-          if (!session.started) {
+          // A loaded session is resumed rather than new, and still hears it.
+          if (!session.introduced) {
             const servers = (message.mcp_servers ?? [])
               .map((server) => `${server.name}=${server.status}`)
               .join(", ");
@@ -616,6 +617,8 @@ export class ClaudeProxyAgent {
               run.loggedOut = true;
               break;
             }
+            // Only now: a user who signs in and prompts again still hears it.
+            session.introduced = true;
             await this.offerModels(session, live, message.model);
             await this.offerCommands(session, live);
           }
@@ -917,7 +920,6 @@ function usageOf(result: SDKResultMessage): PromptResponse["usage"] {
   return { ...total, totalTokens };
 }
 
-/** The editor's MCP servers in the SDK's shape. Servers over ACP itself are not supported. */
 /**
  * Every server the editor described, in the SDK's shape, with nothing left
  * out. This is what the host itself may connect to when it proxies; what

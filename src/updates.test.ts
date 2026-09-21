@@ -296,6 +296,35 @@ describe("UpdateMapper", () => {
     expect(m.map(complete)).toEqual([]);
   });
 
+  it("does not let a replayed user message join the answer before it", () => {
+    const m = new UpdateMapper(session(), { replay: true });
+    const assistant = (id: string, said: string) =>
+      ({
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: { id, content: [{ type: "text", text: said }] },
+      }) as unknown as Parameters<UpdateMapper["map"]>[0];
+    const user = (said: string) =>
+      ({
+        type: "user",
+        parent_tool_use_id: null,
+        message: { role: "user", content: said },
+      }) as unknown as Parameters<UpdateMapper["map"]>[0];
+
+    m.map(user("what is in a.ts?"));
+    expect(m.map(assistant("msg_1", "An empty module."))[0]).toMatchObject({
+      sessionUpdate: "agent_message_chunk",
+      messageId: "msg_1",
+    });
+    const [said] = m.map(user("and b.ts?"));
+    expect(said).toEqual({
+      sessionUpdate: "user_message_chunk",
+      content: { type: "text", text: "and b.ts?" },
+    });
+    // The answer that follows is a message of its own, not more of msg_1.
+    expect(m.map(assistant("msg_2", "Also empty."))[0]).toMatchObject({ messageId: "msg_2" });
+  });
+
   it("stays quiet about usage when no API call happened", () => {
     expect(new UpdateMapper(session()).map(result())).toEqual([]);
   });

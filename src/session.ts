@@ -60,6 +60,13 @@ export class Session {
   readonly readable: string[];
   /** The CLI has saved this session's transcript; later prompts resume it. */
   started = false;
+  /**
+   * The agent has introduced itself to this session: the editor has the
+   * account's models and commands, and a CLI with no credential has been
+   * caught. A loaded session is `started` from the first moment and still
+   * waits for this.
+   */
+  introduced = false;
   running: RunningPrompt | undefined;
   /** Tool calls seen and not finished yet. */
   readonly tools = new Map<string, { name: string; input: Input }>();
@@ -92,7 +99,7 @@ export class Session {
     public model: string | undefined,
   ) {
     this.displayRoot = resolved(cwd);
-    this.readable = narrowRoots([cwd, ...additionalDirectories], homedir());
+    this.readable = narrowRoots(bothForms([cwd, ...additionalDirectories]), homedir());
   }
 
   /**
@@ -118,6 +125,24 @@ export class Session {
       _meta,
     };
   }
+}
+
+/**
+ * Each folder as the editor named it and as the filesystem really has it.
+ * Tool inputs carry resolved paths, so a project reached through a symlink,
+ * which `/tmp` is on macOS, would otherwise match none of its own roots and
+ * send every read to the dialog.
+ */
+function bothForms(roots: string[]): string[] {
+  const forms: string[] = [];
+  for (const root of roots) {
+    for (const form of [root, resolved(root)]) {
+      if (!forms.includes(form)) {
+        forms.push(form);
+      }
+    }
+  }
+  return forms;
 }
 
 function resolved(path: string): string {

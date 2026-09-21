@@ -141,9 +141,13 @@ const options = {
   version,
 };
 const connection = createApp(options, (h) => (host = h)).connect(stream);
+const carried = Object.entries(proxyMcp).map(
+  ([server, tools]) => `${server}:${tools === "all" ? "all" : tools.join(",")}`,
+);
 log.info(
   `Serving ACP on stdio (mode ${permissionMode}, model ${model ?? "the CLI's default"}, ` +
-    `MCP of the editor: ${allowMcp === "all" ? "all" : allowMcp.length === 0 ? "none" : allowMcp.join(", ")})`,
+    `MCP of the editor: ${allowMcp === "all" ? "all" : allowMcp.length === 0 ? "none" : allowMcp.join(", ")}, ` +
+    `carried over: ${carried.length === 0 ? "none" : carried.join(" ")})`,
 );
 
 const shutdown = (reason: string) => {

@@ -166,10 +166,14 @@ export class UpdateMapper {
     kind: "agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk",
     text: string,
   ): SessionUpdate {
+    // The id names the assistant message being streamed. What the user said
+    // is a message of their own, and carrying that id would tell the editor
+    // to show it as part of the agent's answer.
+    const id = kind === "user_message_chunk" ? undefined : this.messageId;
     return {
       sessionUpdate: kind,
       content: { type: "text", text },
-      ...(this.messageId !== undefined && { messageId: this.messageId }),
+      ...(id !== undefined && { messageId: id }),
     };
   }
 
@@ -234,6 +238,10 @@ export class UpdateMapper {
     // Only a replayed user message has text of its own to show; an assistant
     // message is here for the server tools that answer inside it.
     const spoken = this.replay && from === "user";
+    if (spoken) {
+      // Whatever the agent was saying ended when the user spoke.
+      this.messageId = undefined;
+    }
     if (typeof content === "string") {
       return spoken && content !== "" ? [this.chunk("user_message_chunk", content)] : [];
     }
