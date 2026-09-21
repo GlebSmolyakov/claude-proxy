@@ -5,6 +5,7 @@
 // buffers and terminals. Only the model's decisions are written down in
 // advance, as a script of what the CLI would print.
 
+import type { CreateElicitationRequest } from "@agentclientprotocol/sdk";
 import { describe, expect, it, vi } from "vitest";
 
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -225,5 +226,78 @@ describe("the agent asks the user something", () => {
     // The question was never a permission dialog; it came back as an answer.
     expect(editor.dialogs).toEqual([]);
     expect(agent.used[0].input.answers).toEqual({ "Which database?": "Postgres" });
+  });
+});
+
+/** The choices a form put in front of the user. */
+const offered = (request: CreateElicitationRequest) =>
+  (
+    request as unknown as {
+      requestedSchema: { properties: { choice: { oneOf: { const: string }[] } } };
+    }
+  ).requestedSchema.properties.choice.oneOf;
+
+describe("undoing what the agent did", () => {
+  const edited = turn(
+    says("Editing."),
+    uses("Edit", { file_path: "/repo/a.ts", old_string: "one", new_string: "two" }),
+  );
+
+  it("offers the earlier prompts and puts the files back", async () => {
+    const agent = fakeQuery(edited, edited);
+    const editor = openEditor(agent, {
+      files: { "/repo/a.ts": "one\n" },
+      // The user picks the first prompt offered.
+      fill: (request) => ({
+        action: "accept",
+        content: {
+          choice: String(offered(request)[0].const),
+        },
+      }),
+    });
+    await editor.start();
+    await editor.open("/repo");
+
+    await editor.prompt("rename one to two");
+    await expect(editor.prompt("/rewind")).resolves.toEqual({ stopReason: "end_turn" });
+
+    // The command never reached the agent: still one turn, not two.
+    expect(agent.prompts).toHaveLength(1);
+    expect(editor.forms[0]).toMatchObject({ message: expect.stringContaining("Undo") });
+    expect(agent.rewinds).toEqual([expect.any(String)]);
+    expect(editor.said()).toContain("Put 1 file back");
+    expect(editor.said()).toContain("rename one to two");
+  });
+
+  it("takes a number when the user already knows which prompt", async () => {
+    const agent = fakeQuery(edited, edited, edited);
+    const editor = openEditor(agent, { files: { "/repo/a.ts": "one\n" } });
+    await editor.start();
+    await editor.open("/repo");
+
+    await editor.prompt("first change");
+    await editor.prompt("second change");
+    await editor.prompt("/rewind 2");
+
+    // Two prompts back is the first one, and no form was needed.
+    expect(editor.forms).toEqual([]);
+    expect(agent.rewinds).toEqual([expect.any(String)]);
+    expect(editor.said()).toContain("first change");
+  });
+
+  it("says so when there is nothing to undo, and when the CLI cannot", async () => {
+    const agent = fakeQuery(edited);
+    const editor = openEditor(agent, { files: { "/repo/a.ts": "one\n" } });
+    await editor.start();
+    await editor.open("/repo");
+
+    await editor.prompt("/rewind");
+    expect(editor.said()).toContain("Nothing to rewind");
+    expect(agent.rewinds).toEqual([]);
+
+    agent.rewound = { canRewind: false, error: "checkpointing is off" };
+    await editor.prompt("change something");
+    await editor.prompt("/rewind 1");
+    expect(editor.said()).toContain("checkpointing is off");
   });
 });

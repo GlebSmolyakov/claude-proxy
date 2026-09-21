@@ -70,12 +70,13 @@ describe("agent options", () => {
     expect(full.mcpServers).toEqual({ db: { type: "stdio", command: "db-mcp" } });
   });
 
-  it("send the prompt as the user's own message", () => {
-    expect(userMessage([{ type: "text", text: "hi" }])).toEqual({
+  it("send the prompt as the user's own message, under an id a rewind can name", () => {
+    expect(userMessage([{ type: "text", text: "hi" }], "u1")).toEqual({
       type: "user",
       message: { role: "user", content: [{ type: "text", text: "hi" }] },
       parent_tool_use_id: null,
       origin: { kind: "human" },
+      uuid: "u1",
     });
   });
 });

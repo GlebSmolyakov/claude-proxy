@@ -59,6 +59,7 @@ import {
   modelOptions,
   THINKING_CONFIG_ID,
 } from "./config.js";
+import { type Choice, hostCommand, HOST_COMMANDS } from "./commands.js";
 import { type Editor, editorTools, insideWorkspace, READ_TOOL } from "./editor-tools.js";
 import { log } from "./log.js";
 import { availableModes, CANCELLED, decide, isMode, permissionOptions } from "./permissions.js";
@@ -66,7 +67,7 @@ import { narrowTo, type ProjectSettings, projectSettings } from "./project.js";
 import { type Connect, proxyTools, type Wishes } from "./proxy.js";
 import { promptContent } from "./prompt.js";
 import { answersFrom, mcpForm, mcpResult, questionForm, questionsOf } from "./questions.js";
-import { type LiveQuery, type RunningPrompt, Session } from "./session.js";
+import { type LiveQuery, type Prompt, type RunningPrompt, Session } from "./session.js";
 import { type Input, toolInfo } from "./tools.js";
 import { UpdateMapper } from "./updates.js";
 
@@ -352,15 +353,25 @@ export class ClaudeProxyAgent {
     if (content.length === 0) {
       throw RequestError.invalidParams(undefined, "the prompt has nothing the agent can read");
     }
+    const own = hostCommand(params.prompt);
+    if (own) {
+      return this.runCommand(session, own);
+    }
 
+    const asked: Prompt = {
+      uuid: randomUUID(),
+      text: content.map((block) => (block.type === "text" ? block.text : "")).join(" "),
+      at: Date.now(),
+    };
+    session.prompts.push(asked);
     const onAbort = () => void this.cancel({ sessionId: session.id });
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      let run = await this.turn(session, content);
+      let run = await this.turn(session, content, asked);
       if (run.died && !run.cancelled && !run.loggedOut) {
         // The agent died mid-conversation; a new one picks its session up.
         log.warn(`[${session.id}] The agent ended without a result, starting it again`);
-        run = await this.turn(session, content);
+        run = await this.turn(session, content, asked);
       }
       return response(session, run);
     } finally {
@@ -578,7 +589,7 @@ export class ClaudeProxyAgent {
   }
 
   /** One prompt: hand it to the agent and relay what it says until the turn ends. */
-  private async turn(session: Session, content: ContentBlockParam[]): Promise<Run> {
+  private async turn(session: Session, content: ContentBlockParam[], asked: Prompt): Promise<Run> {
     const live = await this.start(session);
     let finish!: () => void;
     const running: RunningPrompt = {
@@ -588,7 +599,7 @@ export class ClaudeProxyAgent {
     };
     session.running = running;
     session.lastUsedAt = Date.now();
-    live.input.push(userMessage(content));
+    live.input.push(userMessage(content, asked.uuid));
 
     const mapper = new UpdateMapper(session);
     const run: Run = { died: false, cancelled: false, loggedOut: false, stderr: "" };
@@ -667,6 +678,68 @@ export class ClaudeProxyAgent {
     });
   }
 
+  /**
+   * A command this host answers itself. The agent is left alone, and what
+   * comes back is said as a message, which is where the user is looking.
+   */
+  private async runCommand(
+    session: Session,
+    { command, args }: NonNullable<ReturnType<typeof hostCommand>>,
+  ): Promise<PromptResponse> {
+    log.info(`[${session.id}] /${command.name}${args === "" ? "" : ` ${args}`}`);
+    let said: string;
+    try {
+      said = await command.run({
+        session,
+        args,
+        agent: async () => (await this.start(session)).query,
+        ...(this.forms && { choose: (title, choices) => this.choose(session, title, choices) }),
+      });
+    } catch (e) {
+      said = `/${command.name} could not be done: ${(e as Error).message}`;
+      log.warn(`[${session.id}] ${said}`);
+    }
+    session.lastUsedAt = Date.now();
+    await this.update(session, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: said },
+      messageId: `command-${command.name}-${Date.now()}`,
+    });
+    return { stopReason: "end_turn" };
+  }
+
+  /** One question with one answer, for a command that needs the user to pick. */
+  private async choose(
+    session: Session,
+    title: string,
+    choices: Choice[],
+  ): Promise<string | undefined> {
+    const answer = await this.editor.request(methods.client.elicitation.create, {
+      mode: "form",
+      sessionId: session.id,
+      message: title,
+      requestedSchema: {
+        type: "object",
+        properties: {
+          choice: {
+            type: "string",
+            title: "Prompt",
+            oneOf: choices.map((choice) => ({
+              const: choice.id,
+              title: choice.name,
+              ...(choice.description !== undefined && { description: choice.description }),
+            })),
+          },
+        },
+      },
+    });
+    if (answer.action !== "accept") {
+      return undefined;
+    }
+    const picked = (answer as { content?: Record<string, unknown> }).content?.choice;
+    return typeof picked === "string" ? picked : undefined;
+  }
+
   /** Tell the editor which slash commands the CLI knows, so it can offer them. */
   private async offerCommands(session: Session, live: LiveQuery): Promise<void> {
     let commands;
@@ -678,11 +751,19 @@ export class ClaudeProxyAgent {
     }
     await this.update(session, {
       sessionUpdate: "available_commands_update",
-      availableCommands: commands.map((command) => ({
-        name: command.name,
-        description: command.description,
-        ...(command.argumentHint !== "" && { input: { hint: command.argumentHint } }),
-      })),
+      availableCommands: [
+        ...commands.map((command) => ({
+          name: command.name,
+          description: command.description,
+          ...(command.argumentHint !== "" && { input: { hint: command.argumentHint } }),
+        })),
+        // The host's own, which the CLI knows nothing about.
+        ...HOST_COMMANDS.map((command) => ({
+          name: command.name,
+          description: command.description,
+          ...(command.argumentHint !== undefined && { input: { hint: command.argumentHint } }),
+        })),
+      ],
     });
   }
 

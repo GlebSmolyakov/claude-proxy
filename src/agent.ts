@@ -40,6 +40,7 @@ export type AgentQuery = AsyncIterable<SDKMessage> &
     | "supportedModels"
     | "supportedCommands"
     | "accountInfo"
+    | "rewindFiles"
     | "close"
   >;
 
@@ -86,6 +87,8 @@ export function buildOptions(o: AgentOptions): Options {
     systemPrompt: { type: "preset", preset: "claude_code" },
     tools: { type: "preset", preset: "claude_code" },
     settingSources: ["user", "project", "local"],
+    // Backups before an edit, which is what `/rewind` restores from.
+    enableFileCheckpointing: true,
     includePartialMessages: true,
     permissionMode: s.mode,
     // Lets the editor switch to bypassPermissions later in the session.
@@ -102,13 +105,17 @@ export function buildOptions(o: AgentOptions): Options {
   };
 }
 
-/** The user's message, typed in the editor. */
-export function userMessage(content: ContentBlockParam[]): SDKUserMessage {
+/**
+ * The user's message, typed in the editor. It carries an id of this host's
+ * own making, which is what a rewind later points at.
+ */
+export function userMessage(content: ContentBlockParam[], uuid: string): SDKUserMessage {
   return {
     type: "user",
     message: { role: "user", content },
     parent_tool_use_id: null,
     origin: { kind: "human" },
+    uuid: uuid as SDKUserMessage["uuid"],
   };
 }
 

@@ -706,7 +706,7 @@ describe("the model picker", () => {
 });
 
 describe("slash commands", () => {
-  it("are offered to the editor once the agent knows them", async () => {
+  it("are offered to the editor once the agent knows them, the host's own included", async () => {
     const { prompt, updates } = await connect(fakeQuery(hello));
     await prompt();
     const offered = updates
@@ -715,6 +715,11 @@ describe("slash commands", () => {
     expect(offered?.availableCommands).toEqual([
       { name: "compact", description: "Compact the conversation" },
       { name: "review", description: "Review the diff", input: { hint: "[pr]" } },
+      {
+        name: "rewind",
+        description: "Undo the file changes since one of your earlier prompts",
+        input: { hint: "[number]" },
+      },
     ]);
   });
 

@@ -86,6 +86,12 @@ What the editor did not claim stays with the agent: files go to disk, commands r
 
 The model list starts as the aliases and is replaced by what the account really has once an agent has run. The editor gets the CLI's slash commands at the same time, your own among them; a command typed as a prompt runs and answers as a message from the agent.
 
+### Commands of the host's own
+
+A few commands are answered here instead of by the model. They stand in the same list as the CLI's, and a prompt that is one of them never reaches the agent.
+
+- **`/rewind`** puts the files back as they were before one of your earlier prompts. The CLI keeps a backup before every edit; this asks which prompt to return to — a form when the editor can show one, `/rewind 2` when it cannot — and says which files changed back.
+
 ### The line between the editor and the CLI
 
 The editor and the CLI know nothing about each other. The editor speaks ACP to the host, the CLI works as a plain CLI, and everything in between happens here. So the MCP servers an editor passes in `session/new` do not reach the CLI by default: they would meet behind the host's back, and a stdio server is also a program the editor named being run. Every such server is logged with its command or its address, and `--allow-mcp Air` or `--allow-mcp all` lets them through.

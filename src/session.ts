@@ -20,6 +20,14 @@ import { type Input, TaskPlan, toolInfo } from "./tools.js";
 /** Until the first result says otherwise. */
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 
+/** One thing the user asked for, and the id the CLI knows it by. */
+export interface Prompt {
+  uuid: string;
+  /** What they typed, for a list they can choose from. */
+  text: string;
+  at: number;
+}
+
 /** The agent of a session: one `query()` that serves every prompt in it. */
 export interface LiveQuery {
   query: AgentQuery;
@@ -79,6 +87,8 @@ export class Session {
   readonly plan = new TaskPlan();
   /** Window → the highest share of it this session has already reported. */
   readonly announcedQuota = new Map<string, number>();
+  /** The prompts of this session, newest last, as `/rewind` offers them. */
+  readonly prompts: Prompt[] = [];
   contextWindow = DEFAULT_CONTEXT_WINDOW;
   /** What the editor's model picker offers, once the agent has reported it. */
   models: SessionConfigSelectOption[] | undefined;

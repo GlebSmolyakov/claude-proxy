@@ -12,6 +12,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type {
   AccountInfo,
   Options,
+  RewindFilesResult,
   PermissionMode,
   SDKMessage,
   SDKUserMessage,
@@ -44,6 +45,10 @@ export interface Fake {
   runQuery: RunQuery;
   /** Every tool a script used, and what the host answered about it. */
   used: ToolUse[];
+  /** Prompts the host asked to rewind the files to. */
+  rewinds: string[];
+  /** What a rewind answers; a test changes it to try the other endings. */
+  rewound: RewindFilesResult;
   /** What the CLI reports about the account it works under. */
   account: AccountInfo;
   /** Models the editor asked for, through the picker. */
@@ -60,6 +65,8 @@ export function fakeQuery(...scripts: Script[]): Fake {
   const fake: Fake = {
     runQuery: () => never(),
     used: [],
+    rewinds: [],
+    rewound: { canRewind: true, filesChanged: ["src/a.ts"], insertions: 2, deletions: 1 },
     starts: [],
     prompts: [],
     interrupts: 0,
@@ -100,6 +107,10 @@ export function fakeQuery(...scripts: Script[]): Fake {
         fake.models.push(model ?? "default");
       },
       accountInfo: async () => fake.account,
+      rewindFiles: async (userMessageId: string) => {
+        fake.rewinds.push(userMessageId);
+        return fake.rewound;
+      },
       supportedCommands: async () => [
         { name: "compact", description: "Compact the conversation", argumentHint: "" },
         { name: "review", description: "Review the diff", argumentHint: "[pr]" },
