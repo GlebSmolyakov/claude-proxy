@@ -9,14 +9,21 @@ The agent edits a file, you see the diff on a card in your editor and press "all
 
 ## Install
 
-You need Node 22 or newer and Claude Code logged in to your account.
+You need Node 22 or newer and Claude Code logged in to your account. Nothing is published to npm, so the agent is run from this repository:
+
+```bash
+npx github:GlebSmolyakov/claude-proxy --help
+```
+
+That builds it on the way in, and the editor can be pointed at the same command. To work on it instead, clone it:
 
 ```bash
 git clone https://github.com/GlebSmolyakov/claude-proxy.git
 cd claude-proxy
 pnpm install
-pnpm run build
 ```
+
+`pnpm install` builds it too; after that the agent is `node dist/index.js`.
 
 The Claude Code binary is the one that ships with the SDK. To run the `claude` you installed yourself, put its path in `CLAUDE_CODE_EXECUTABLE`.
 
@@ -28,14 +35,25 @@ In JetBrains Air: _task panel → agent picker → Add ACP Agent_. Air opens `ac
 {
   "agent_servers": {
     "Claude Code": {
+      "command": "npx",
+      "args": ["-y", "github:GlebSmolyakov/claude-proxy"]
+    }
+  }
+}
+```
+
+The agent shows up in the picker and works in the open project. A clone is pointed at the file it built, which is what to use while changing it:
+
+```json
+{
+  "agent_servers": {
+    "Claude Code": {
       "command": "node",
       "args": ["/Users/you/WebstormProjects/claude-proxy/dist/index.js"]
     }
   }
 }
 ```
-
-The agent shows up in the picker and works in the open project.
 
 ## How it works
 

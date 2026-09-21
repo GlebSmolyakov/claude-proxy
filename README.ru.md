@@ -9,14 +9,21 @@
 
 ## Установка
 
-Нужны Node 22 или новее и Claude Code, залогиненный в ваш аккаунт.
+Нужны Node 22 или новее и Claude Code, залогиненный в ваш аккаунт. В npm ничего не опубликовано, агент запускается прямо из репозитория:
+
+```bash
+npx github:GlebSmolyakov/claude-proxy --help
+```
+
+Сборка происходит по дороге, и редактору можно дать ту же команду. Чтобы менять код, клонируйте:
 
 ```bash
 git clone https://github.com/GlebSmolyakov/claude-proxy.git
 cd claude-proxy
 pnpm install
-pnpm run build
 ```
+
+`pnpm install` заодно собирает проект, дальше агент, это `node dist/index.js`.
 
 Бинарник Claude Code берётся тот, что приезжает вместе с SDK. Чтобы работал ваш установленный `claude`, задайте путь к нему в `CLAUDE_CODE_EXECUTABLE`.
 
@@ -28,14 +35,25 @@ pnpm run build
 {
   "agent_servers": {
     "Claude Code": {
+      "command": "npx",
+      "args": ["-y", "github:GlebSmolyakov/claude-proxy"]
+    }
+  }
+}
+```
+
+После сохранения агент появляется в списке и работает в открытом проекте. Клон подключается к собранному файлу, и это то, чем пользуются, пока правят код:
+
+```json
+{
+  "agent_servers": {
+    "Claude Code": {
       "command": "node",
       "args": ["/Users/you/WebstormProjects/claude-proxy/dist/index.js"]
     }
   }
 }
 ```
-
-После сохранения агент появляется в списке и работает в открытом проекте.
 
 ## Как это работает
 

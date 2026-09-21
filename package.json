@@ -3,13 +3,36 @@
   "version": "0.1.0",
   "private": true,
   "description": "An ACP agent that runs Claude Code inside an editor, through the Claude Agent SDK",
+  "license": "Apache-2.0",
+  "author": "Gleb Smolyakov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GlebSmolyakov/claude-proxy.git"
+  },
+  "homepage": "https://github.com/GlebSmolyakov/claude-proxy#readme",
+  "bugs": "https://github.com/GlebSmolyakov/claude-proxy/issues",
+  "keywords": [
+    "acp",
+    "agent-client-protocol",
+    "claude",
+    "claude-code",
+    "editor",
+    "agent"
+  ],
   "type": "module",
   "packageManager": "pnpm@11.17.0",
   "bin": {
     "claude-proxy": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "README.ru.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
+    "prepare": "tsc",
     "start": "node dist/index.js",
     "dev": "pnpm run build && pnpm run start",
     "lint": "eslint src",
